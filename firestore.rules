@@ -1,0 +1,175 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function isAdmin() {
+      return signedIn()
+        && userDoc().data.active == true
+        && userDoc().data.role == 'admin';
+    }
+
+    function isActiveUser() {
+      return signedIn()
+        && userDoc().data.active == true;
+    }
+
+    function ownPlayerId() {
+      return userDoc().data.playerId;
+    }
+
+    function settingsDoc() {
+      return get(/databases/$(database)/documents/settings/app);
+    }
+
+    // Default ON when settings doc is missing or field unset.
+    function allowPlayersEditOthers() {
+      return !exists(/databases/$(database)/documents/settings/app)
+        || !('allowPlayersEditOthersAttendance' in settingsDoc().data)
+        || settingsDoc().data.allowPlayersEditOthersAttendance == true;
+    }
+
+    function validAttendanceStatus() {
+      return request.resource.data.status in [
+        'playing', 'maybe', 'not_playing', 'no_response'
+      ];
+    }
+
+    function gameDoc(gameId) {
+      return get(/databases/$(database)/documents/games/$(gameId));
+    }
+
+    function gameAllowsAttendance(gameId) {
+      return exists(/databases/$(database)/documents/games/$(gameId))
+        && gameDoc(gameId).data.status == 'scheduled'
+        && !('noGame' in gameDoc(gameId).data && gameDoc(gameId).data.noGame == true);
+    }
+
+    match /users/{uid} {
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow read: if isAdmin();
+      // Self-registration: create own profile as player only (never admin).
+      allow create: if signedIn()
+        && request.auth.uid == uid
+        && request.resource.data.uid == uid
+        && request.resource.data.role == 'player'
+        && request.resource.data.active == true
+        && request.resource.data.emailNotifications == true
+        && request.resource.data.email is string
+        && request.resource.data.displayName is string
+        && request.resource.data.playerId is string
+        && request.resource.data.keys().hasAll([
+          'uid', 'playerId', 'displayName', 'email', 'role',
+          'emailNotifications', 'active', 'createdAt', 'updatedAt'
+        ]);
+      allow delete: if isAdmin();
+      // Role changes are Admin SDK only (/api/admin/users/role).
+      // Clients (including Admins) cannot write role via Firestore.
+      allow update: if isAdmin()
+        && request.resource.data.role == resource.data.role
+        && request.resource.data.playerId == resource.data.playerId
+        && request.resource.data.email == resource.data.email
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['displayName', 'emailNotifications', 'active', 'updatedAt', 'updatedBy'])
+        || (signedIn()
+            && request.auth.uid == uid
+            && request.resource.data.role == resource.data.role
+            && request.resource.data.playerId == resource.data.playerId
+            && request.resource.data.email == resource.data.email
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['displayName', 'emailNotifications', 'updatedAt']));
+    }
+
+    match /players/{playerId} {
+      allow read: if isActiveUser();
+      // Self-registration may create the deterministic players/p_{uid} doc.
+      allow create: if isAdmin()
+        || (signedIn()
+            && request.resource.data.id == playerId
+            && request.resource.data.linkedUid == request.auth.uid
+            && request.resource.data.active == true
+            && request.resource.data.email is string
+            && request.resource.data.displayName is string);
+      allow update: if isAdmin()
+        || (signedIn()
+            && request.resource.data.linkedUid == request.auth.uid
+            && request.resource.data.id == playerId
+            && (resource.data.linkedUid == null
+                || resource.data.linkedUid == request.auth.uid)
+            && request.resource.data.diff(resource.data).affectedKeys()
+                .hasOnly(['displayName', 'email', 'updatedAt', 'linkedUid', 'active']));
+      allow delete: if isAdmin();
+    }
+
+    match /playerEvaluations/{playerId} {
+      allow read, write: if isAdmin();
+    }
+
+    match /games/{gameId} {
+      allow read: if isActiveUser();
+      allow create, update, delete: if isAdmin();
+    }
+
+    match /attendance/{docId} {
+      allow read: if isActiveUser();
+
+      allow create: if (isAdmin() || isActiveUser())
+        && validAttendanceStatus()
+        && gameAllowsAttendance(request.resource.data.gameId)
+        && request.resource.data.keys().hasAll(['gameId', 'playerId', 'status', 'updatedAt'])
+        && request.resource.data.gameId is string
+        && request.resource.data.playerId is string
+        && (isAdmin()
+            || request.resource.data.playerId == ownPlayerId()
+            || allowPlayersEditOthers());
+
+      allow update: if (isAdmin() || isActiveUser())
+        && validAttendanceStatus()
+        && gameAllowsAttendance(request.resource.data.gameId)
+        && request.resource.data.playerId == resource.data.playerId
+        && request.resource.data.gameId == resource.data.gameId
+        && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['status', 'updatedAt', 'updatedBy'])
+        && (isAdmin()
+            || resource.data.playerId == ownPlayerId()
+            || allowPlayersEditOthers());
+
+      allow delete: if isAdmin();
+    }
+
+    match /gameTeams/{gameId} {
+      allow read: if isActiveUser();
+
+      allow create, update: if isAdmin()
+        && !('ratings' in request.resource.data)
+        && !('overall' in request.resource.data)
+        && !('teamStrength' in request.resource.data)
+        && !('teamAStrength' in request.resource.data)
+        && !('teamBStrength' in request.resource.data);
+
+      allow delete: if isAdmin();
+    }
+
+    match /settings/{docId} {
+      allow read: if isActiveUser();
+      allow write: if isAdmin();
+    }
+
+    // Email notification idempotency / history — Admin SDK only (no client access).
+    match /notificationSends/{id} {
+      allow read, write: if false;
+    }
+    match /notificationDispatches/{id} {
+      allow read, write: if false;
+    }
+    match /notificationRuns/{id} {
+      allow read, write: if false;
+    }
+  }
+}

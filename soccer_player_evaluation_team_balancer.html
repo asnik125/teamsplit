@@ -1,0 +1,868 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Оценка Футболистов и Балансировщик Команд</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-main: #0f172a;
+      --bg-card: #1e293b;
+      --border-color: #334155;
+      --accent-green: #22c55e;
+      --accent-blue: #3b82f6;
+      --accent-purple: #8b5cf6;
+      --text-main: #f8fafc;
+      --text-muted: #94a3b8;
+      --danger: #ef4444;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg-main);
+      color: var(--text-main);
+      line-height: 1.5;
+      padding: 20px;
+    }
+
+    .container { max-width: 1200px; margin: 0 auto; }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    h1 { font-size: 1.5rem; font-weight: 700; }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+      background-color: #020617;
+      padding: 4px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+    }
+
+    .tab-btn {
+      padding: 8px 16px;
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font-weight: 600;
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.2s;
+    }
+
+    .tab-btn.active { background-color: var(--accent-blue); color: white; }
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+
+    .action-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .btn {
+      padding: 8px 16px;
+      border: none;
+      border-radius: 6px;
+      font-weight: 600;
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      transition: opacity 0.2s;
+    }
+
+    .btn:hover { opacity: 0.9; }
+    .btn-primary { background-color: var(--accent-green); color: #020617; }
+    .btn-secondary { background-color: var(--bg-card); color: var(--text-main); border: 1px solid var(--border-color); }
+    .btn-danger { background-color: var(--danger); color: white; }
+
+    .players-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+      gap: 16px;
+    }
+
+    .player-card {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 10px;
+      padding: 16px;
+    }
+
+    .player-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 12px;
+    }
+
+    .player-name { font-size: 1.1rem; font-weight: 700; }
+
+    .overall-badge {
+      font-size: 1.1rem;
+      font-weight: 700;
+      padding: 4px 10px;
+      border-radius: 20px;
+      color: white;
+    }
+
+    .badge-high { background-color: #16a34a; }
+    .badge-mid { background-color: #d97706; }
+    .badge-low { background-color: #dc2626; }
+
+    .scores-summary {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      font-size: 0.85rem;
+      background-color: #020617;
+      padding: 8px;
+      border-radius: 6px;
+      margin-bottom: 12px;
+    }
+
+    .card-actions { display: flex; justify-content: flex-end; gap: 8px; }
+
+    .sync-box {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      padding: 16px;
+      border-radius: 8px;
+      margin-bottom: 20px;
+    }
+
+    .sync-inputs {
+      display: flex;
+      gap: 10px;
+      margin-top: 10px;
+    }
+
+    .form-control {
+      width: 100%;
+      padding: 8px 12px;
+      background-color: #020617;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      color: var(--text-main);
+    }
+
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      z-index: 100;
+      padding: 16px;
+    }
+
+    .modal {
+      background-color: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 12px;
+      width: 100%;
+      max-width: 600px;
+      max-height: 90vh;
+      overflow-y: auto;
+      padding: 20px;
+    }
+
+    .category-title {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: var(--accent-blue);
+      margin: 16px 0 8px 0;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 4px;
+    }
+
+    .ratings-form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 12px;
+    }
+
+    .rating-item {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      background-color: #020617;
+      padding: 6px 12px;
+      border-radius: 6px;
+    }
+
+    .rating-item select {
+      width: 60px;
+      padding: 4px;
+      background-color: var(--bg-card);
+      color: white;
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+    }
+
+    .teams-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+      gap: 20px;
+    }
+
+    .team-card {
+      background-color: var(--bg-card);
+      border: 2px solid var(--border-color);
+      border-radius: 12px;
+      padding: 16px;
+      min-height: 250px;
+      transition: background-color 0.2s;
+    }
+
+    .team-card.drag-over {
+      background-color: #33415540;
+      border-style: dashed;
+    }
+
+    .team-card.team-1 { border-color: var(--accent-blue); }
+    .team-card.team-2 { border-color: var(--accent-purple); }
+
+    .team-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 16px;
+      padding-bottom: 8px;
+      border-bottom: 1px solid var(--border-color);
+    }
+
+    .team-player-list { 
+      list-style: none; 
+      min-height: 150px;
+    }
+
+    .team-player-item {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 12px;
+      margin-bottom: 8px;
+      background-color: #020617;
+      border: 1px solid var(--border-color);
+      border-radius: 6px;
+      cursor: grab;
+      user-select: none;
+    }
+
+    .team-player-item:active {
+      cursor: grabbing;
+    }
+
+    .checkbox-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      gap: 10px;
+      margin-top: 12px;
+    }
+
+    .checkbox-label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      font-size: 0.9rem;
+    }
+
+    .status-badge {
+      font-size: 0.8rem;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: #334155;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="container">
+    <header>
+      <h1>⚽ Soccer Evaluator & Balancer</h1>
+      <div class="tabs">
+        <button class="tab-btn active" onclick="switchTab('players')">Игроки</button>
+        <button class="tab-btn" onclick="switchTab('teams')">Деление на команды</button>
+      </div>
+    </header>
+
+    <!-- TAB 1: PLAYERS -->
+    <div id="tab-players" class="tab-content active">
+      <div class="action-bar">
+        <button class="btn btn-primary" onclick="openAddModal()">+ Добавить игрока</button>
+        <div style="display: flex; gap: 8px;">
+          <button class="btn btn-secondary" onclick="exportData()">📥 Скачать JSON</button>
+          <button class="btn btn-secondary" onclick="document.getElementById('file-input').click()">📤 Загрузить JSON</button>
+          <input type="file" id="file-input" accept=".json" style="display: none;" onchange="importData(event)">
+        </div>
+      </div>
+      <div class="players-grid" id="players-list"></div>
+    </div>
+
+    <!-- TAB 2: TEAMS -->
+    <div id="tab-teams" class="tab-content">
+      <div class="sync-box">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="font-size: 0.95rem;">🔄 Синхронизация состава из Google Таблицы</h3>
+          <span id="target-date-badge" class="status-badge" style="color: var(--accent-green);">Дата не выбрана</span>
+        </div>
+        <div class="sync-inputs">
+          <input type="text" id="sheet-url" class="form-control" value="https://docs.google.com/spreadsheets/d/1z9GtImiFIucxiuNYqITRo2SvYuZsQhlSo4IyK0sybu4/edit?gid=0#gid=0">
+          <button class="btn btn-primary" onclick="syncWithGoogleSheet()">Обновить состав</button>
+        </div>
+      </div>
+
+      <div class="sync-box">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+          <h3 style="font-size: 1rem;">Игроки на игру (<span id="selected-count">0</span>):</h3>
+          <div>
+            <button class="btn btn-secondary" style="font-size:0.8rem;" onclick="toggleSelectAll(true)">Выбрать всех</button>
+            <button class="btn btn-secondary" style="font-size:0.8rem;" onclick="toggleSelectAll(false)">Снять выбор</button>
+          </div>
+        </div>
+        <div class="checkbox-grid" id="checkbox-grid"></div>
+        <div style="margin-top: 16px; text-align: right;">
+          <button class="btn btn-primary" onclick="generateTeams()">⚖️ Сбалансировать (Snake Draft)</button>
+        </div>
+      </div>
+
+      <div class="teams-grid" id="teams-result" style="display: none;">
+        <!-- TEAM A -->
+        <div class="team-card team-1" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropPlayer(event, 't1-list')">
+          <div class="team-header">
+            <h2 style="color: var(--accent-blue);">Команда А</h2>
+            <div>
+              <span id="t1-count" style="font-size:0.9rem; color: var(--text-muted);"></span> |
+              <strong id="t1-sum">0</strong> pts
+            </div>
+          </div>
+          <ul class="team-player-list" id="t1-list"></ul>
+        </div>
+
+        <!-- TEAM B -->
+        <div class="team-card team-2" ondragover="allowDrop(event)" ondragleave="removeDragOver(event)" ondrop="dropPlayer(event, 't2-list')">
+          <div class="team-header">
+            <h2 style="color: var(--accent-purple);">Команда Б</h2>
+            <div>
+              <span id="t2-count" style="font-size:0.9rem; color: var(--text-muted);"></span> |
+              <strong id="t2-sum">0</strong> pts
+            </div>
+          </div>
+          <ul class="team-player-list" id="t2-list"></ul>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL FOR ADD/EDIT -->
+  <div id="modal" class="modal-backdrop" style="display: none;">
+    <div class="modal">
+      <div style="font-size: 1.2rem; font-weight: 700; margin-bottom: 16px;" id="modal-title">Игрок</div>
+      <form id="player-form" onsubmit="savePlayer(event)">
+        <input type="hidden" id="player-id">
+        <div style="margin-bottom: 12px;">
+          <label style="font-size: 0.85rem; color: var(--text-muted);">Имя игрока</label>
+          <input type="text" id="player-name" class="form-control" required placeholder="Введите имя">
+        </div>
+
+        <div class="category-title">1. Физическая подготовка</div>
+        <div class="ratings-form-grid">
+          <div class="rating-item"><label>Скорость</label><select id="p-speed" class="form-control"></select></div>
+          <div class="rating-item"><label>Сила</label><select id="p-strength" class="form-control"></select></div>
+          <div class="rating-item"><label>Выносливость</label><select id="p-stamina" class="form-control"></select></div>
+        </div>
+
+        <div class="category-title">2. Технический профиль</div>
+        <div class="ratings-form-grid">
+          <div class="rating-item"><label>Приём / Контроль</label><select id="p-control" class="form-control"></select></div>
+          <div class="rating-item"><label>Пасы</label><select id="p-passing" class="form-control"></select></div>
+          <div class="rating-item"><label>Завершение / Отбор</label><select id="p-action" class="form-control"></select></div>
+        </div>
+
+        <div class="category-title">3. Тактический интеллект</div>
+        <div class="ratings-form-grid">
+          <div class="rating-item"><label>Защита (Защ)</label><select id="p-defend" class="form-control"></select></div>
+          <div class="rating-item"><label>Нападение (Нап)</label><select id="p-attack" class="form-control"></select></div>
+          <div class="rating-item"><label>Переходные фазы</label><select id="p-transition" class="form-control"></select></div>
+        </div>
+
+        <div class="category-title">4. Психология</div>
+        <div class="ratings-form-grid">
+          <div class="rating-item"><label>Принятие решений</label><select id="p-decisions" class="form-control"></select></div>
+          <div class="rating-item"><label>Работоспособность</label><select id="p-workrate" class="form-control"></select></div>
+        </div>
+
+        <div style="margin-top: 20px; display: flex; justify-content: flex-end; gap: 8px;">
+          <button type="button" class="btn btn-secondary" onclick="closeModal()">Отмена</button>
+          <button type="submit" class="btn btn-primary">Сохранить</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    const INITIAL_PLAYERS = [
+      { id: "1790023551530", name: "Kolya A", speed: 7, strength: 7, stamina: 7, control: 7, passing: 8, action: 6, defend: 6, attack: 8, transition: 7, decisions: 8, workrate: 7 },
+      { id: "1790023590350", name: "Misha", speed: 7, strength: 6, stamina: 7, control: 8, passing: 8, action: 8, defend: 7, attack: 8, transition: 7, decisions: 8, workrate: 7 },
+      { id: "1790023627857", name: "Yura O", speed: 5, strength: 5, stamina: 6, control: 8, passing: 8, action: 8, defend: 8, attack: 8, transition: 8, decisions: 8, workrate: 7 },
+      { id: "1790023681956", name: "Alexandr", speed: 7, strength: 8, stamina: 8, control: 6, passing: 8, action: 8, defend: 8, attack: 8, transition: 8, decisions: 7, workrate: 9 },
+      { id: "1790023751635", name: "Alex R", speed: 8, strength: 7, stamina: 7, control: 9, passing: 8, action: 8, defend: 8, attack: 9, transition: 8, decisions: 9, workrate: 8 },
+      { id: "1790023791996", name: "Boris", speed: 6, strength: 7, stamina: 7, control: 6, passing: 6, action: 5, defend: 7, attack: 7, transition: 7, decisions: 5, workrate: 7 },
+      { id: "1790023824861", name: "Kolya I", speed: 5, strength: 5, stamina: 5, control: 5, passing: 6, action: 5, defend: 5, attack: 7, transition: 5, decisions: 5, workrate: 5 },
+      { id: "1790023866235", name: "Igor", speed: 7, strength: 7, stamina: 7, control: 4, passing: 4, action: 4, defend: 8, attack: 4, transition: 5, decisions: 4, workrate: 7 },
+      { id: "1790023915321", name: "Edik", speed: 4, strength: 8, stamina: 5, control: 5, passing: 6, action: 5, defend: 6, attack: 5, transition: 4, decisions: 5, workrate: 5 },
+      { id: "1790023963165", name: "Max", speed: 7, strength: 6, stamina: 6, control: 6, passing: 6, action: 6, defend: 6, attack: 6, transition: 6, decisions: 6, workrate: 6 },
+      { id: "1790024031522", name: "Michael", speed: 8, strength: 7, stamina: 8, control: 5, passing: 5, action: 7, defend: 7, attack: 5, transition: 6, decisions: 5, workrate: 8 }
+    ];
+
+    let players = JSON.parse(localStorage.getItem('soccer_players')) || INITIAL_PLAYERS;
+
+    function initSelects() {
+      const selects = document.querySelectorAll('.ratings-form-grid select');
+      selects.forEach(s => {
+        s.innerHTML = '';
+        for (let i = 1; i <= 10; i++) {
+          s.innerHTML += `<option value="${i}">${i}</option>`;
+        }
+      });
+    }
+
+    function saveToStorage() {
+      localStorage.setItem('soccer_players', JSON.stringify(players));
+    }
+
+    function calculateOverall(p) {
+      const sum = p.speed + p.strength + p.stamina + p.control + p.passing + 
+                  p.action + p.defend + p.attack + p.transition + p.decisions + p.workrate;
+      return (sum / 11).toFixed(1);
+    }
+
+    function renderPlayers() {
+      const list = document.getElementById('players-list');
+      list.innerHTML = '';
+
+      players.forEach(p => {
+        const ovr = calculateOverall(p);
+        let badgeClass = 'badge-mid';
+        if (ovr >= 7.5) badgeClass = 'badge-high';
+        if (ovr < 5.5) badgeClass = 'badge-low';
+
+        list.innerHTML += `
+          <div class="player-card">
+            <div class="player-header">
+              <span class="player-name">${p.name}</span>
+              <span class="overall-badge ${badgeClass}">${ovr}</span>
+            </div>
+            <div class="scores-summary">
+              <div>🏃 Скорость: <strong>${p.speed}</strong> | Сила: <strong>${p.strength}</strong></div>
+              <div>⚽ Пас: <strong>${p.passing}</strong> | Контроль: <strong>${p.control}</strong></div>
+              <div>🧠 Защ: <strong>${p.defend}</strong> | Нап: <strong>${p.attack}</strong></div>
+              <div>🔥 Работа: <strong>${p.workrate}</strong></div>
+            </div>
+            <div class="card-actions">
+              <button class="btn btn-secondary" style="font-size:0.8rem;" onclick="openEditModal('${p.id}')">✏️ Ред.</button>
+              <button class="btn btn-danger" style="font-size:0.8rem;" onclick="deletePlayer('${p.id}')">🗑️</button>
+            </div>
+          </div>
+        `;
+      });
+      renderCheckboxGrid();
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+      if(tab === 'players') {
+        document.querySelectorAll('.tab-btn')[0].classList.add('active');
+        document.getElementById('tab-players').classList.add('active');
+      } else {
+        document.querySelectorAll('.tab-btn')[1].classList.add('active');
+        document.getElementById('tab-teams').classList.add('active');
+      }
+    }
+
+    function openAddModal() {
+      document.getElementById('modal-title').innerText = 'Добавить игрока';
+      document.getElementById('player-id').value = '';
+      document.getElementById('player-name').value = '';
+      document.querySelectorAll('.ratings-form-grid select').forEach(s => s.value = '6');
+      document.getElementById('modal').style.display = 'flex';
+    }
+
+    function openEditModal(id) {
+      const p = players.find(x => x.id === id);
+      if (!p) return;
+      document.getElementById('modal-title').innerText = 'Редактировать игрока';
+      document.getElementById('player-id').value = p.id;
+      document.getElementById('player-name').value = p.name;
+      
+      document.getElementById('p-speed').value = p.speed;
+      document.getElementById('p-strength').value = p.strength;
+      document.getElementById('p-stamina').value = p.stamina;
+      document.getElementById('p-control').value = p.control;
+      document.getElementById('p-passing').value = p.passing;
+      document.getElementById('p-action').value = p.action;
+      document.getElementById('p-defend').value = p.defend;
+      document.getElementById('p-attack').value = p.attack;
+      document.getElementById('p-transition').value = p.transition;
+      document.getElementById('p-decisions').value = p.decisions;
+      document.getElementById('p-workrate').value = p.workrate;
+
+      document.getElementById('modal').style.display = 'flex';
+    }
+
+    function closeModal() { document.getElementById('modal').style.display = 'none'; }
+
+    function savePlayer(e) {
+      e.preventDefault();
+      const id = document.getElementById('player-id').value || Date.now().toString();
+      const pData = {
+        id,
+        name: document.getElementById('player-name').value,
+        speed: parseInt(document.getElementById('p-speed').value),
+        strength: parseInt(document.getElementById('p-strength').value),
+        stamina: parseInt(document.getElementById('p-stamina').value),
+        control: parseInt(document.getElementById('p-control').value),
+        passing: parseInt(document.getElementById('p-passing').value),
+        action: parseInt(document.getElementById('p-action').value),
+        defend: parseInt(document.getElementById('p-defend').value),
+        attack: parseInt(document.getElementById('p-attack').value),
+        transition: parseInt(document.getElementById('p-transition').value),
+        decisions: parseInt(document.getElementById('p-decisions').value),
+        workrate: parseInt(document.getElementById('p-workrate').value)
+      };
+
+      const idx = players.findIndex(x => x.id === id);
+      if (idx >= 0) players[idx] = pData;
+      else players.push(pData);
+
+      saveToStorage();
+      renderPlayers();
+
+      if (document.getElementById('teams-result').style.display !== 'none') {
+        recalculateTeamTotals();
+      }
+
+      closeModal();
+    }
+
+    function deletePlayer(id) {
+      if (confirm('Удалить игрока?')) {
+        players = players.filter(p => p.id !== id);
+        saveToStorage();
+        renderPlayers();
+      }
+    }
+
+    function renderCheckboxGrid() {
+      const grid = document.getElementById('checkbox-grid');
+      grid.innerHTML = '';
+      players.forEach(p => {
+        grid.innerHTML += `
+          <label class="checkbox-label">
+            <input type="checkbox" value="${p.id}" id="cb-${p.id}" checked onchange="updateSelectedCount()">
+            ${p.name} (${calculateOverall(p)})
+          </label>
+        `;
+      });
+      updateSelectedCount();
+    }
+
+    function updateSelectedCount() {
+      const count = document.querySelectorAll('#checkbox-grid input:checked').length;
+      document.getElementById('selected-count').innerText = count;
+    }
+
+    function toggleSelectAll(val) {
+      document.querySelectorAll('#checkbox-grid input').forEach(c => c.checked = val);
+      updateSelectedCount();
+    }
+
+    // СИНХРОНИЗАЦИЯ С GOOGLE SHEET
+    async function syncWithGoogleSheet() {
+      const urlInput = document.getElementById('sheet-url').value;
+      const match = urlInput.match(/\/d\/([a-zA-Z0-9-_]+)/);
+      if (!match) {
+        alert("Неверный URL Google Таблицы!");
+        return;
+      }
+      const sheetId = match[1];
+      const csvUrl = `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
+
+      try {
+        const response = await fetch(csvUrl);
+        const text = await response.text();
+        
+        const rows = text.split('\n').map(row => row.split(',').map(cell => cell.replace(/^"|"$/g, '').trim()));
+        if (rows.length < 2) return;
+
+        const header = rows[0];
+        const today = new Date(2026, 8, 21);
+        let targetColIndex = -1;
+        let minDiff = Infinity;
+        let targetDateStr = "";
+
+        for (let j = 1; j < header.length; j++) {
+          const colName = header[j];
+          const parts = colName.split('-');
+          if (parts.length === 2) {
+            const monthMap = { 'Jan':0, 'Feb':1, 'Mar':2, 'Apr':3, 'May':4, 'Jun':5, 'Jul':6, 'Aug':7, 'Sep':8, 'Oct':9, 'Nov':10, 'Dec':11 };
+            const m = monthMap[parts[0]];
+            const d = parseInt(parts[1]);
+            if (m !== undefined && !isNaN(d)) {
+              const colDate = new Date(2026, m, d);
+              const diff = colDate - today;
+              if (diff >= 0 && diff < minDiff) {
+                minDiff = diff;
+                targetColIndex = j;
+                targetDateStr = colName;
+              }
+            }
+          }
+        }
+
+        if (targetColIndex === -1) {
+          targetColIndex = 1;
+          targetDateStr = header[1];
+        }
+
+        document.getElementById('target-date-badge').innerText = `Игра: ${targetDateStr}`;
+        toggleSelectAll(false);
+
+        let matchedCount = 0;
+        for (let i = 1; i < rows.length; i++) {
+          const pName = rows[i][0];
+          const status = rows[i][targetColIndex];
+
+          if (pName && status && status.toLowerCase() === 'yes') {
+            const foundPlayer = players.find(p => p.name.toLowerCase().trim() === pName.toLowerCase().trim());
+            if (foundPlayer) {
+              const cb = document.getElementById(`cb-${foundPlayer.id}`);
+              if (cb) {
+                cb.checked = true;
+                matchedCount++;
+              }
+            }
+          }
+        }
+
+        updateSelectedCount();
+        alert(`Синхронизировано на ${targetDateStr}! Отмечено игроков: ${matchedCount}`);
+
+      } catch (e) {
+        alert("Ошибка при получении данных из таблицы.");
+        console.error(e);
+      }
+    }
+
+    // ДЕПАРТАМЕНТ БАЛАНСИРОВКИ (Уличный Драфт)
+    function generateTeams() {
+      const selectedIds = Array.from(document.querySelectorAll('#checkbox-grid input:checked')).map(c => c.value);
+      const activePlayers = players.filter(p => selectedIds.includes(p.id));
+
+      if (activePlayers.length < 2) {
+        alert('Выберите минимум 2 игроков!');
+        return;
+      }
+
+      activePlayers.sort((a, b) => parseFloat(calculateOverall(b)) - parseFloat(calculateOverall(a)));
+
+      const team1 = [];
+      const team2 = [];
+
+      activePlayers.forEach((player, index) => {
+        const cycle = index % 4;
+        if (cycle === 0 || cycle === 3) {
+          team1.push(player);
+        } else {
+          team2.push(player);
+        }
+      });
+
+      const renderTeamList = (listId, team) => {
+        const ul = document.getElementById(listId);
+        ul.innerHTML = '';
+        team.forEach(p => {
+          ul.appendChild(createPlayerElement(p));
+        });
+      };
+
+      renderTeamList('t1-list', team1);
+      renderTeamList('t2-list', team2);
+
+      recalculateTeamTotals();
+      document.getElementById('teams-result').style.display = 'grid';
+    }
+
+    function createPlayerElement(p) {
+      const li = document.createElement('li');
+      li.className = 'team-player-item';
+      li.draggable = true;
+      li.dataset.id = p.id;
+      li.ondragstart = dragStart;
+
+      li.innerHTML = `
+        <span>${p.name}</span>
+        <span><strong>${calculateOverall(p)}</strong> (Защ: ${p.defend}, Нап: ${p.attack})</span>
+      `;
+      return li;
+    }
+
+    function dragStart(e) {
+      e.dataTransfer.setData('text/plain', e.currentTarget.dataset.id);
+    }
+
+    function allowDrop(e) {
+      e.preventDefault();
+      e.currentTarget.classList.add('drag-over');
+    }
+
+    function removeDragOver(e) {
+      e.currentTarget.classList.remove('drag-over');
+    }
+
+    // ЛОГИКА ДРАГ-ЭНД-ДРОП С АВТОМАЦИЕЙ РЕБАЛАНСА
+    function dropPlayer(e, targetListId) {
+      e.preventDefault();
+      e.currentTarget.classList.remove('drag-over');
+
+      const playerId = e.dataTransfer.getData('text/plain');
+      if (!playerId) return;
+
+      const targetList = document.getElementById(targetListId);
+      const sourceListId = targetListId === 't1-list' ? 't2-list' : 't1-list';
+      const sourceList = document.getElementById(sourceListId);
+
+      const movedItem = sourceList.querySelector(`[data-id="${playerId}"]`);
+      if (!movedItem) return; // Игрок перенесён внутри той же команды
+
+      // 1. Помещаем перетащенного игрока в новую команду
+      targetList.appendChild(movedItem);
+
+      // 2. АВТО-КОМПЕНСАЦИЯ: ищем игрока из targetList, чей перенос в sourceList сделает баланс минимальным
+      autoRebalance(targetListId, sourceListId, playerId);
+
+      recalculateTeamTotals();
+    }
+
+    function autoRebalance(targetListId, sourceListId, movedPlayerId) {
+      const targetList = document.getElementById(targetListId);
+      const sourceList = document.getElementById(sourceListId);
+
+      const getListSum = (ul) => {
+        let sum = 0;
+        ul.querySelectorAll('.team-player-item').forEach(item => {
+          const p = players.find(x => x.id === item.dataset.id);
+          if (p) sum += parseFloat(calculateOverall(p));
+        });
+        return sum;
+      };
+
+      let currentTargetSum = getListSum(targetList);
+      let currentSourceSum = getListSum(sourceList);
+
+      // Ищем кандидата из targetList (исключая того, кого только что притащили)
+      const candidates = Array.from(targetList.querySelectorAll('.team-player-item'))
+        .filter(item => item.dataset.id !== movedPlayerId);
+
+      if (candidates.length === 0) return;
+
+      let bestCandidate = null;
+      let minDiff = Math.abs(currentTargetSum - currentSourceSum);
+
+      candidates.forEach(cand => {
+        const p = players.find(x => x.id === cand.dataset.id);
+        if (!p) return;
+        const val = parseFloat(calculateOverall(p));
+
+        // Гипотетическая разница очков, если перекинуть этого игрока в обратную команду
+        const hypTargetSum = currentTargetSum - val;
+        const hypSourceSum = currentSourceSum + val;
+        const hypDiff = Math.abs(hypTargetSum - hypSourceSum);
+
+        if (hypDiff < minDiff) {
+          minDiff = hypDiff;
+          bestCandidate = cand;
+        }
+      });
+
+      // Переносим лучшего кандидата для компенсации
+      if (bestCandidate) {
+        sourceList.appendChild(bestCandidate);
+      }
+    }
+
+    function recalculateTeamTotals() {
+      const calculateListSum = (listId) => {
+        const items = document.querySelectorAll(`#${listId} .team-player-item`);
+        let sum = 0;
+        items.forEach(item => {
+          const p = players.find(x => x.id === item.dataset.id);
+          if (p) {
+            sum += parseFloat(calculateOverall(p));
+            item.querySelector('span:last-child').innerHTML = `<strong>${calculateOverall(p)}</strong> (Защ: ${p.defend}, Нап: ${p.attack})`;
+          }
+        });
+        return { count: items.length, sum: sum.toFixed(1) };
+      };
+
+      const t1Data = calculateListSum('t1-list');
+      const t2Data = calculateListSum('t2-list');
+
+      document.getElementById('t1-count').innerText = `${t1Data.count} игр.`;
+      document.getElementById('t1-sum').innerText = t1Data.sum;
+
+      document.getElementById('t2-count').innerText = `${t2Data.count} игр.`;
+      document.getElementById('t2-sum').innerText = t2Data.sum;
+    }
+
+    function exportData() {
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(players, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", "soccer_players_backup.json");
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    }
+
+    function importData(event) {
+      const file = event.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = function(e) {
+        try {
+          const imported = JSON.parse(e.target.result);
+          if (Array.isArray(imported)) {
+            players = imported;
+            saveToStorage();
+            renderPlayers();
+            alert('Игроки успешно загружены!');
+          }
+        } catch (err) { alert('Ошибка чтения файла'); }
+      };
+      reader.readAsText(file);
+    }
+
+    initSelects();
+    renderPlayers();
+  </script>
+</body>
+</html>

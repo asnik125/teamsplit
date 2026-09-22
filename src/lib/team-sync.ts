@@ -1,0 +1,152 @@
+import {
+  assertValidTeamSplit,
+  generateSnakeDraftTeams,
+  toPublicMembers,
+} from "./balancer";
+import type {
+  AttendanceStatus,
+  RatedPlayer,
+  TeamMemberPublic,
+} from "./types";
+
+export const DEFAULT_MIN_PLAYING_FOR_TEAMS = 6;
+
+/** @deprecated */
+export const MIN_PLAYING_FOR_TEAMS = DEFAULT_MIN_PLAYING_FOR_TEAMS;
+
+export function insufficientMessage(_minPlaying: number): string {
+  return "Not enough players yet.";
+}
+
+export function confirmedProgressLabel(
+  includedCount: number,
+  minPlaying: number
+): string {
+  return `${includedCount} / ${minPlaying} players confirmed`;
+}
+
+export function isIncludedForTeams(
+  status: AttendanceStatus,
+  includeMaybe: boolean
+): boolean {
+  if (status === "playing") return true;
+  if (includeMaybe && status === "maybe") return true;
+  return false;
+}
+
+export type TeamsSyncAction =
+  | "insufficient"
+  | "created"
+  | "updated"
+  | "unchanged";
+
+export interface ExistingTeamsSnapshot {
+  teamA: TeamMemberPublic[];
+  teamB: TeamMemberPublic[];
+  published: boolean;
+  manuallyAdjusted: boolean;
+  includeMaybePlayers: boolean;
+}
+
+export interface TeamsSyncDecision {
+  action: TeamsSyncAction;
+  message: string;
+  playingCount: number;
+  includedCount: number;
+  minPlaying: number;
+  includeMaybePlayers: boolean;
+  writeTeams: boolean;
+  clearTeams: boolean;
+  teamA: TeamMemberPublic[];
+  teamB: TeamMemberPublic[];
+  markStale: boolean;
+  manuallyAdjusted: boolean;
+  keepPublished: boolean;
+}
+
+/**
+ * Every attendance / include-maybe change fully recalculates teams.
+ * Attendance always wins over prior manual arrangements.
+ */
+export function decideTeamsSync(input: {
+  includedRated: RatedPlayer[];
+  maybePlayerIds?: Set<string>;
+  existing: ExistingTeamsSnapshot | null;
+  minPlaying?: number;
+  includeMaybePlayers?: boolean;
+}): TeamsSyncDecision {
+  const minPlaying = Math.max(
+    2,
+    Math.floor(input.minPlaying ?? DEFAULT_MIN_PLAYING_FOR_TEAMS)
+  );
+  const includeMaybePlayers = Boolean(input.includeMaybePlayers);
+  const includedCount = input.includedRated.length;
+  const existing = input.existing;
+  const maybeIds = input.maybePlayerIds ?? new Set<string>();
+
+  if (includedCount < minPlaying) {
+    return {
+      action: "insufficient",
+      message: insufficientMessage(minPlaying),
+      playingCount: includedCount,
+      includedCount,
+      minPlaying,
+      includeMaybePlayers,
+      writeTeams: false,
+      clearTeams: Boolean(existing),
+      teamA: [],
+      teamB: [],
+      markStale: false,
+      manuallyAdjusted: false,
+      keepPublished: false,
+    };
+  }
+
+  const { teamA, teamB } = generateSnakeDraftTeams(input.includedRated);
+  assertValidTeamSplit(
+    input.includedRated.map((p) => p.id),
+    teamA,
+    teamB
+  );
+
+  const markMaybe = (members: TeamMemberPublic[]): TeamMemberPublic[] =>
+    members.map((m) =>
+      maybeIds.has(m.playerId) ? { ...m, maybe: true } : { ...m, maybe: false }
+    );
+
+  const publicA = markMaybe(toPublicMembers(teamA));
+  const publicB = markMaybe(toPublicMembers(teamB));
+  assertValidTeamSplit(
+    input.includedRated.map((p) => p.id),
+    publicA,
+    publicB
+  );
+
+  const hadTeams =
+    Boolean(existing) &&
+    (existing!.teamA.length > 0 || existing!.teamB.length > 0);
+
+  return {
+    action: hadTeams ? "updated" : "created",
+    message: "Teams ready",
+    playingCount: includedCount,
+    includedCount,
+    minPlaying,
+    includeMaybePlayers,
+    writeTeams: true,
+    clearTeams: false,
+    teamA: publicA,
+    teamB: publicB,
+    markStale: false,
+    manuallyAdjusted: false,
+    keepPublished: false,
+  };
+}
+
+export function playingIdsFromAttendance(
+  records: { playerId: string; status: AttendanceStatus }[]
+): string[] {
+  return records
+    .filter((r) => r.status === "playing")
+    .map((r) => r.playerId);
+}
