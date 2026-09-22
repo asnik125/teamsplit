@@ -4,6 +4,9 @@ import { useCallback, useEffect, useState } from "react";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppNav } from "@/components/AppNav";
 import { PageHeading } from "@/components/PageHeading";
+import { ViewportGate } from "@/components/viewport/ViewportGate";
+import { MobilePlayerApp } from "@/components/mobile/MobilePlayerApp";
+import { MobileChrome } from "@/components/mobile/MobileChrome";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
 import { listGames } from "@/lib/firebase/data";
@@ -18,6 +21,10 @@ import {
   notificationTypeLabel,
 } from "@/lib/notifications/defaults";
 import { formatRunSummary } from "@/lib/notifications/format";
+import {
+  normalizeTimeLocalHHmm,
+  notificationTimeSelectOptions,
+} from "@/lib/notifications/timezone";
 import { formatShortDate } from "@/lib/schedule";
 import { formatUnknownError } from "@/lib/errors";
 import type {
@@ -39,6 +46,9 @@ function RuleEditor({
   value: NotificationRuleSettings;
   onChange: (next: NotificationRuleSettings) => void;
 }) {
+  const timeValue = normalizeTimeLocalHHmm(value.timeLocal) ?? value.timeLocal;
+  const timeOptions = notificationTimeSelectOptions(timeValue);
+
   return (
     <div className="card space-y-3 p-4">
       <div className="flex items-start justify-between gap-3">
@@ -78,20 +88,28 @@ function RuleEditor({
         </div>
         <div>
           <label className="label">Time (America/Vancouver)</label>
-          <input
+          <select
             className="input"
-            type="time"
-            value={value.timeLocal}
+            value={timeValue}
             onChange={(e) =>
-              onChange({ ...value, timeLocal: e.target.value })
+              onChange({
+                ...value,
+                timeLocal: normalizeTimeLocalHHmm(e.target.value) ?? e.target.value,
+              })
             }
-          />
+            aria-label={`Time for ${title}`}
+          >
+            {timeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
     </div>
   );
 }
-
 function NotificationsContent() {
   const { user } = useAuth();
   const [settings, setSettings] = useState<NotificationSettings>(
@@ -313,12 +331,25 @@ function NotificationsContent() {
 export default function AdminNotificationsPage() {
   return (
     <RequireAuth adminOnly>
-      <div className="app-shell">
-        <AppNav />
-        <main className="app-main">
-          <NotificationsContent />
-        </main>
-      </div>
+      <ViewportGate
+        desktop={
+          <div className="app-shell">
+            <AppNav />
+            <main className="app-main">
+              <NotificationsContent />
+            </main>
+          </div>
+        }
+        mobilePlayer={<MobilePlayerApp />}
+        mobileAdmin={
+          <div className="m-app">
+            <MobileChrome title="Notifications" />
+            <div className="m-pane m-pane-scroll">
+              <NotificationsContent />
+            </div>
+          </div>
+        }
+      />
     </RequireAuth>
   );
 }

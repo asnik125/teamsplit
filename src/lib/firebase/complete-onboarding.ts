@@ -4,6 +4,7 @@ import { getClientDb } from "./client";
 import { COLLECTIONS } from "./data";
 import type { Player, UserProfile } from "../types";
 import {
+  DUPLICATE_DISPLAY_NAME_MESSAGE,
   ONBOARDING_USER_MESSAGE,
   planSelfRegistration,
   playerIdForAuthUid,
@@ -13,9 +14,15 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function isDuplicateNameError(message: string): boolean {
+  return (
+    message === DUPLICATE_DISPLAY_NAME_MESSAGE || /already taken/i.test(message)
+  );
+}
+
 /**
  * Client fallback: users + player only.
- * Evaluations stay Admin-SDK-only (isolation) — created via /api/auth/provision.
+ * Evaluations stay Admin-SDK-only — created via /api/auth/provision.
  */
 export async function completeOnboardingClient(
   user: User,
@@ -81,7 +88,7 @@ export async function completeOnboardingClient(
 
 /**
  * Always hits provision API (creates/backfills evaluation via Admin SDK).
- * Falls back to client user+player writes if API is unreachable, then retries API once.
+ * Duplicate display name (409) is never bypassed by the client fallback.
  */
 export async function provisionTeamSplitAccount(
   user: User,
@@ -90,7 +97,7 @@ export async function provisionTeamSplitAccount(
   const name =
     displayName?.trim() || user.displayName?.trim() || undefined;
 
-  async function callProvision(): Promise<UserProfile | null> {
+  async function callProvision(): Promise<UserProfile> {
     const token = await user.getIdToken();
     const res = await fetch("/api/auth/provision", {
       method: "POST",
@@ -101,25 +108,46 @@ export async function provisionTeamSplitAccount(
       body: JSON.stringify({ displayName: name }),
     });
     const data = (await res.json()) as { ok?: boolean; error?: string };
-    if (!res.ok || !data.ok) return null;
+    if (!res.ok || !data.ok) {
+      const err = new Error(
+        data.error || `Provisioning failed (${res.status})`
+      );
+      (err as Error & { status?: number }).status = res.status;
+      throw err;
+    }
     const snap = await getDoc(doc(getClientDb(), COLLECTIONS.users, user.uid));
-    return snap.exists() ? (snap.data() as UserProfile) : null;
+    if (!snap.exists()) {
+      throw new Error(ONBOARDING_USER_MESSAGE);
+    }
+    return snap.data() as UserProfile;
   }
 
   try {
-    const fromApi = await callProvision();
-    if (fromApi) return fromApi;
-  } catch {
-    /* fall through */
+    return await callProvision();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    const status =
+      e && typeof e === "object" && "status" in e
+        ? Number((e as { status: unknown }).status)
+        : 0;
+    if (status === 409 || isDuplicateNameError(msg)) {
+      throw new Error(DUPLICATE_DISPLAY_NAME_MESSAGE);
+    }
+    // Network / 5xx — try client user+player, then retry provision for eval
   }
 
-  // Ensure user+player exist, then retry API for evaluation backfill
   await completeOnboardingClient(user, name);
   try {
-    const retry = await callProvision();
-    if (retry) return retry;
-  } catch {
-    /* ignore */
+    return await callProvision();
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : "";
+    const status =
+      e && typeof e === "object" && "status" in e
+        ? Number((e as { status: unknown }).status)
+        : 0;
+    if (status === 409 || isDuplicateNameError(msg)) {
+      throw new Error(DUPLICATE_DISPLAY_NAME_MESSAGE);
+    }
   }
 
   const snap = await getDoc(doc(getClientDb(), COLLECTIONS.users, user.uid));

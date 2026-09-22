@@ -103,10 +103,57 @@ export function parseTimeLocal(timeLocal: string): { hour: number; minute: numbe
   return { hour, minute };
 }
 
-/** Format HH:mm for display as h:mm AM/PM. */
+/** Canonical Firestore/storage form: HH:mm with zero-padded hour. */
+export function toTimeLocalHHmm(hour: number, minute: number): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+}
+
+/** Normalize `H:mm` / `HH:mm` → `HH:mm`, or null if invalid. */
+export function normalizeTimeLocalHHmm(timeLocal: string): string | null {
+  try {
+    const { hour, minute } = parseTimeLocal(timeLocal);
+    return toTimeLocalHHmm(hour, minute);
+  } catch {
+    return null;
+  }
+}
+
+/** Format HH:mm for display as 12-hour with AM/PM, e.g. `04:00 PM`. */
 export function formatTimeLocal12(timeHHmm: string): string {
   const { hour, minute } = parseTimeLocal(timeHHmm);
   const suffix = hour >= 12 ? "PM" : "AM";
   const h12 = hour % 12 === 0 ? 12 : hour % 12;
-  return `${h12}:${String(minute).padStart(2, "0")} ${suffix}`;
+  return `${String(h12).padStart(2, "0")}:${String(minute).padStart(2, "0")} ${suffix}`;
+}
+
+export interface NotificationTimeOption {
+  /** Stored value (HH:mm) */
+  value: string;
+  /** UI label (12-hour AM/PM) */
+  label: string;
+}
+
+/**
+ * Dropdown options every 15 minutes (00:00 … 23:45).
+ * If `includeValue` is a valid HH:mm not on the grid, it is appended so existing
+ * saved settings remain selectable.
+ */
+export function notificationTimeSelectOptions(
+  includeValue?: string | null
+): NotificationTimeOption[] {
+  const options: NotificationTimeOption[] = [];
+  for (let hour = 0; hour < 24; hour++) {
+    for (const minute of [0, 15, 30, 45]) {
+      const value = toTimeLocalHHmm(hour, minute);
+      options.push({ value, label: formatTimeLocal12(value) });
+    }
+  }
+
+  const extra = includeValue ? normalizeTimeLocalHHmm(includeValue) : null;
+  if (extra && !options.some((o) => o.value === extra)) {
+    options.push({ value: extra, label: formatTimeLocal12(extra) });
+    options.sort((a, b) => a.value.localeCompare(b.value));
+  }
+
+  return options;
 }

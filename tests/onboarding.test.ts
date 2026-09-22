@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  DUPLICATE_DISPLAY_NAME_MESSAGE,
   ONBOARDING_USER_MESSAGE,
+  findDisplayNameConflict,
+  normalizeDisplayNameKey,
   passwordResetTouchesTeamSplitRole,
   planSelfRegistration,
   playerIdForAuthUid,
@@ -153,5 +156,25 @@ describe("self-registration onboarding", () => {
     expect(isStaffRole("player")).toBe(false);
     expect(ONBOARDING_USER_MESSAGE.toLowerCase()).not.toContain("firestore");
     expect(passwordResetTouchesTeamSplitRole()).toBe(false);
+  });
+
+  it("rejects duplicate display names case-insensitively", () => {
+    expect(normalizeDisplayNameKey("  Alex   R ")).toBe("alex r");
+    const conflict = findDisplayNameConflict({
+      displayName: "alex r",
+      players: [
+        { id: "p1", displayName: "Alex R" },
+        { id: "p2", displayName: "Michael" },
+      ],
+    });
+    expect(conflict?.id).toBe("p1");
+    expect(
+      findDisplayNameConflict({
+        displayName: "Alex R",
+        players: [{ id: "p1", displayName: "Alex R" }],
+        excludePlayerId: "p1",
+      })
+    ).toBeNull();
+    expect(DUPLICATE_DISPLAY_NAME_MESSAGE).toMatch(/already taken/i);
   });
 });

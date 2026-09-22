@@ -22,7 +22,7 @@ import type {
   UserProfile,
   AppSettings,
 } from "../types";
-import { RATING_KEYS } from "../types";
+import { RATING_KEYS, sanitizeTeamMembers } from "../types";
 import { DEFAULT_MIN_PLAYING_FOR_TEAMS } from "../team-sync";
 import {
   nextUpcomingGame as nextUpcomingGameFromSchedule,
@@ -241,6 +241,8 @@ export async function getGameTeams(
   const data = snap.data() as GameTeams;
   return {
     ...data,
+    teamA: sanitizeTeamMembers(data.teamA),
+    teamB: sanitizeTeamMembers(data.teamB),
     manuallyAdjusted: Boolean(data.manuallyAdjusted),
     includeMaybePlayers: Boolean(data.includeMaybePlayers),
   };

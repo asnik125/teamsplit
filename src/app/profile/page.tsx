@@ -5,9 +5,16 @@ import { doc, updateDoc } from "firebase/firestore";
 import { RequireAuth } from "@/components/RequireAuth";
 import { AppNav } from "@/components/AppNav";
 import { PageHeading } from "@/components/PageHeading";
+import { ViewportGate } from "@/components/viewport/ViewportGate";
+import { MobilePlayerApp } from "@/components/mobile/MobilePlayerApp";
+import { MobileAdminApp } from "@/components/mobile/MobileAdminApp";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
-import { COLLECTIONS } from "@/lib/firebase/data";
+import { COLLECTIONS, listPlayers } from "@/lib/firebase/data";
+import {
+  DUPLICATE_DISPLAY_NAME_MESSAGE,
+  findDisplayNameConflict,
+} from "@/lib/auth/onboarding";
 import { formatUnknownError } from "@/lib/errors";
 import { roleLabel } from "@/lib/roles";
 
@@ -25,12 +32,35 @@ function ProfileForm() {
     if (!profile) return;
     setError(null);
     setMessage(null);
+    const trimmed = displayName.trim();
+    if (!trimmed) {
+      setError("Display name is required.");
+      return;
+    }
     try {
-      await updateDoc(doc(getClientDb(), COLLECTIONS.users, profile.uid), {
-        displayName: displayName.trim(),
-        emailNotifications,
-        updatedAt: new Date().toISOString(),
+      const db = getClientDb();
+      const players = await listPlayers(db);
+      const conflict = findDisplayNameConflict({
+        displayName: trimmed,
+        players,
+        excludePlayerId: profile.playerId,
       });
+      if (conflict) {
+        setError(DUPLICATE_DISPLAY_NAME_MESSAGE);
+        return;
+      }
+      const now = new Date().toISOString();
+      await updateDoc(doc(db, COLLECTIONS.users, profile.uid), {
+        displayName: trimmed,
+        emailNotifications,
+        updatedAt: now,
+      });
+      if (profile.playerId) {
+        await updateDoc(doc(db, COLLECTIONS.players, profile.playerId), {
+          displayName: trimmed,
+          updatedAt: now,
+        });
+      }
       await refreshProfile();
       setMessage("Profile updated.");
     } catch (err) {
@@ -88,10 +118,16 @@ function ProfileForm() {
 export default function ProfilePage() {
   return (
     <RequireAuth>
-      <div className="player-shell">
-        <AppNav />
-        <ProfileForm />
-      </div>
+      <ViewportGate
+        desktop={
+          <div className="player-shell">
+            <AppNav />
+            <ProfileForm />
+          </div>
+        }
+        mobilePlayer={<MobilePlayerApp initialFrame="profile" />}
+        mobileAdmin={<MobileAdminApp initialTab="settings" />}
+      />
     </RequireAuth>
   );
 }

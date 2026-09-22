@@ -25,7 +25,7 @@ import { provisionTeamSplitAccount } from "./complete-onboarding";
 import type { UserProfile } from "../types";
 import { isStaffRole } from "../roles";
 import { formatUnknownError } from "../errors";
-import { ONBOARDING_USER_MESSAGE } from "../auth/onboarding";
+import { DUPLICATE_DISPLAY_NAME_MESSAGE, ONBOARDING_USER_MESSAGE } from "../auth/onboarding";
 
 export type AppViewMode = "admin" | "player";
 
@@ -73,6 +73,11 @@ interface AuthContextValue {
   user: User | null;
   profile: UserProfile | null;
   loading: boolean;
+  /**
+   * True once the first Firebase Auth resolution (authStateReady + profile
+   * attempt for that user) has finished. Sign In must wait for this.
+   */
+  authResolved: boolean;
   configured: boolean;
   /** Real Firestore role is admin (security / capabilities). */
   isAdmin: boolean;
@@ -104,14 +109,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [authResolved, setAuthResolved] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewModeState] = useState<AppViewMode>("admin");
+  const [viewMode, setViewModeState] = useState<AppViewMode>(() =>
+    readStoredViewMode()
+  );
   /** Avoid concurrent onboard races from signUp + onAuthStateChanged. */
   const onboardInFlight = useRef<Promise<UserProfile> | null>(null);
-
-  useEffect(() => {
-    setViewModeState(readStoredViewMode());
-  }, []);
+  const profileUidRef = useRef<string | null>(null);
+  const applyGeneration = useRef(0);
 
   const setViewMode = useCallback((mode: AppViewMode) => {
     setViewModeState(mode);
@@ -141,52 +147,67 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!configured) {
       setLoading(false);
+      setAuthResolved(true);
       return;
     }
 
     let cancelled = false;
     let unsub: (() => void) | undefined;
     setLoading(true);
+    setAuthResolved(false);
 
     const applyAuthState = async (next: User | null) => {
+      const gen = ++applyGeneration.current;
       try {
         if (cancelled) return;
 
         if (!next) {
+          profileUidRef.current = null;
           setUser(null);
           setProfile(null);
           setError(null);
           return;
         }
 
+        const sameUserReady = profileUidRef.current === next.uid;
+        if (!sameUserReady) {
+          setLoading(true);
+        }
+
         setUser(next);
         let p = await getUserProfile(getClientDb(), next.uid);
-        if (cancelled) return;
+        if (cancelled || gen !== applyGeneration.current) return;
 
         // Missing profile OR incomplete onboarding (e.g. no evaluation) → provision
         try {
           p = await ensureProfile(next, next.displayName);
         } catch (err) {
-          if (cancelled) return;
+          if (cancelled || gen !== applyGeneration.current) return;
           console.error("Onboarding failed", err);
           if (!p) {
+            profileUidRef.current = null;
             setProfile(null);
             setError(ONBOARDING_USER_MESSAGE);
             return;
           }
           // Profile exists but eval backfill failed — still allow session
         }
-        if (cancelled) return;
+        if (cancelled || gen !== applyGeneration.current) return;
+        profileUidRef.current = p.uid;
         setProfile(p);
         setError(null);
       } catch (err) {
-        if (cancelled) return;
+        if (cancelled || gen !== applyGeneration.current) return;
         console.error("Auth/profile load failed", err);
         setUser(next);
+        profileUidRef.current = null;
         setProfile(null);
         setError(ONBOARDING_USER_MESSAGE);
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled && gen === applyGeneration.current) {
+          setLoading(false);
+          setAuthResolved(true);
+        }
       }
     };
 
@@ -206,10 +227,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           (authErr) => {
             if (cancelled) return;
             console.error("onAuthStateChanged error", authErr);
+            profileUidRef.current = null;
             setUser(null);
             setProfile(null);
             setError(formatUnknownError(authErr));
             setLoading(false);
+            setAuthResolved(true);
           }
         );
       } catch (err) {
@@ -217,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         console.error("Auth bootstrap failed", err);
         setError(formatUnknownError(err));
         setLoading(false);
+        setAuthResolved(true);
       }
     })();
 
@@ -228,42 +252,113 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signIn = useCallback(async (email: string, password: string) => {
     setError(null);
+    setLoading(true);
     try {
-      await signInWithEmailAndPassword(getClientAuth(), email, password);
+      const cred = await signInWithEmailAndPassword(
+        getClientAuth(),
+        email,
+        password
+      );
+      // Resolve profile here so UI stays on the loading shell until role is known.
+      // onAuthStateChanged may also run; generation + onboardInFlight de-dupe work.
+      let p = await getUserProfile(getClientDb(), cred.user.uid);
+      try {
+        p = await ensureProfile(cred.user, cred.user.displayName);
+      } catch (err) {
+        console.error("Onboarding failed", err);
+        if (!p) {
+          profileUidRef.current = null;
+          setUser(cred.user);
+          setProfile(null);
+          setError(ONBOARDING_USER_MESSAGE);
+          setLoading(false);
+          setAuthResolved(true);
+          throw new Error(ONBOARDING_USER_MESSAGE);
+        }
+      }
+      profileUidRef.current = p.uid;
+      setUser(cred.user);
+      setProfile(p);
+      setError(null);
+      setLoading(false);
+      setAuthResolved(true);
     } catch (err) {
+      if (err instanceof Error && err.message === ONBOARDING_USER_MESSAGE) {
+        throw err;
+      }
       const message = mapAuthError(err);
       setError(message);
+      setLoading(false);
+      setAuthResolved(true);
       throw new Error(message);
     }
-  }, []);
+  }, [ensureProfile]);
 
   const signUp = useCallback(
     async (email: string, password: string, displayName: string) => {
       setError(null);
+      setLoading(true);
       const auth = getClientAuth();
+      let createdUser: User | null = null;
       try {
         const cred = await createUserWithEmailAndPassword(
           auth,
           email.trim(),
           password
         );
+        createdUser = cred.user;
         const name = displayName.trim();
         if (name) {
           await updateProfile(cred.user, { displayName: name });
         }
         // Shared in-flight promise with applyAuthState — no race / no orphan profile.
         const p = await ensureProfile(cred.user, name);
+        profileUidRef.current = p.uid;
         setUser(cred.user);
         setProfile(p);
         setError(null);
+        setLoading(false);
+        setAuthResolved(true);
       } catch (err) {
+        const message =
+          err instanceof Error ? err.message : mapAuthError(err);
+        // Roll back Auth account if TeamSplit rejected a taken display name.
+        if (
+          createdUser &&
+          (message === DUPLICATE_DISPLAY_NAME_MESSAGE ||
+            /already taken/i.test(message))
+        ) {
+          try {
+            await createdUser.delete();
+          } catch {
+            /* ignore */
+          }
+          createdUser = null;
+          profileUidRef.current = null;
+          setUser(null);
+          setProfile(null);
+          setError(DUPLICATE_DISPLAY_NAME_MESSAGE);
+          setLoading(false);
+          setAuthResolved(true);
+          throw new Error(DUPLICATE_DISPLAY_NAME_MESSAGE);
+        }
         if (err instanceof Error && err.message === ONBOARDING_USER_MESSAGE) {
           setError(ONBOARDING_USER_MESSAGE);
+          setLoading(false);
+          setAuthResolved(true);
           throw err;
         }
-        const message = mapAuthError(err);
-        setError(message);
-        throw new Error(message);
+        if (err instanceof Error && message === DUPLICATE_DISPLAY_NAME_MESSAGE) {
+          setError(DUPLICATE_DISPLAY_NAME_MESSAGE);
+          setLoading(false);
+          setAuthResolved(true);
+          throw err;
+        }
+        const mapped = mapAuthError(err);
+        setError(mapped);
+        setLoading(false);
+        setAuthResolved(true);
+        throw new Error(mapped);
       }
     },
     [ensureProfile]
@@ -289,7 +384,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const signOut = useCallback(async () => {
     setError(null);
-    await firebaseSignOut(getClientAuth());
+    setLoading(true);
+    profileUidRef.current = null;
+    try {
+      await firebaseSignOut(getClientAuth());
+      setUser(null);
+      setProfile(null);
+      setLoading(false);
+      setAuthResolved(true);
+    } catch (err) {
+      setLoading(false);
+      setAuthResolved(true);
+      throw err;
+    }
   }, []);
 
   const refreshProfile = useCallback(async () => {
@@ -299,6 +406,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (!p) {
         p = await ensureProfile(user, user.displayName);
       }
+      profileUidRef.current = p.uid;
       setProfile(p);
       setError(null);
     } catch (err) {
@@ -317,6 +425,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       loading,
+      authResolved,
       configured,
       isAdmin,
       viewMode: isAdmin ? viewMode : "player",
@@ -334,6 +443,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       profile,
       loading,
+      authResolved,
       configured,
       isAdmin,
       viewMode,

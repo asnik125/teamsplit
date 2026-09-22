@@ -2,8 +2,10 @@
 
 import { FormEvent, useEffect, useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { AppLoadingShell } from "@/components/AppLoadingShell";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { formatUnknownError } from "@/lib/errors";
+import { shouldShowSignInForm } from "@/lib/session-ready";
 
 type AuthMode = "signin" | "register" | "reset";
 
@@ -14,7 +16,9 @@ function SignInForm() {
     resetPassword,
     configured,
     user,
+    profile,
     loading,
+    authResolved,
     error: authError,
     clearError,
   } = useAuth();
@@ -38,10 +42,16 @@ function SignInForm() {
   }, []);
 
   useEffect(() => {
-    if (!loading && user && mode !== "reset") {
+    if (
+      authResolved &&
+      !loading &&
+      user &&
+      profile?.active &&
+      mode !== "reset"
+    ) {
       router.replace(next);
     }
-  }, [loading, user, router, next, mode]);
+  }, [authResolved, loading, user, profile, router, next, mode]);
 
   function switchMode(nextMode: AuthMode) {
     setMode(nextMode);
@@ -61,6 +71,7 @@ function SignInForm() {
     try {
       if (mode === "signin") {
         await signIn(email.trim(), password);
+        // Keep shell until replace; profile is already resolved by signIn.
         router.replace(next);
         return;
       }
@@ -93,6 +104,27 @@ function SignInForm() {
     }
   }
 
+  const showForm = shouldShowSignInForm({
+    authResolved,
+    loading,
+    userPresent: Boolean(user),
+    authActionPending: busy && mode !== "reset",
+  });
+
+  if (!mounted || !showForm) {
+    return (
+      <AppLoadingShell
+        label={
+          busy && mode === "signin"
+            ? "Signing in…"
+            : busy && mode === "register"
+              ? "Creating account…"
+              : "Loading…"
+        }
+      />
+    );
+  }
+
   return (
     <div className="mx-auto mt-10 max-w-md">
       <div className="mb-8 text-center">
@@ -111,158 +143,150 @@ function SignInForm() {
         </div>
       )}
 
-      {!mounted ? (
-        <div className="card space-y-4">
-          <p className="text-sm text-slate-400">Loading…</p>
-        </div>
-      ) : (
-        <>
-          <div
-            className="mb-4 flex rounded-lg border border-slate-700 bg-slate-900/80 p-1"
-            role="tablist"
-            aria-label="Account"
+      <div
+        className="mb-4 flex rounded-lg border border-slate-700 bg-slate-900/80 p-1"
+        role="tablist"
+        aria-label="Account"
+      >
+        {(
+          [
+            ["signin", "Sign in"],
+            ["register", "Register"],
+            ["reset", "Reset"],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            role="tab"
+            aria-selected={mode === id}
+            className={`flex-1 rounded-md px-2 py-2 text-sm font-semibold transition ${
+              mode === id
+                ? "bg-slate-700 text-white"
+                : "text-slate-400 hover:text-slate-200"
+            }`}
+            onClick={() => switchMode(id)}
           >
-            {(
-              [
-                ["signin", "Sign in"],
-                ["register", "Register"],
-                ["reset", "Reset"],
-              ] as const
-            ).map(([id, label]) => (
-              <button
-                key={id}
-                type="button"
-                role="tab"
-                aria-selected={mode === id}
-                className={`flex-1 rounded-md px-2 py-2 text-sm font-semibold transition ${
-                  mode === id
-                    ? "bg-slate-700 text-white"
-                    : "text-slate-400 hover:text-slate-200"
-                }`}
-                onClick={() => switchMode(id)}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
+            {label}
+          </button>
+        ))}
+      </div>
 
-          <form onSubmit={onSubmit} className="card space-y-4">
-            {mode === "register" && (
-              <div>
-                <label className="label" htmlFor="displayName">
-                  Name
-                </label>
-                <input
-                  id="displayName"
-                  className="input"
-                  type="text"
-                  autoComplete="name"
-                  value={displayName}
-                  onChange={(e) => setDisplayName(e.target.value)}
-                  required
-                />
-              </div>
-            )}
-            <div>
-              <label className="label" htmlFor="email">
-                Email
-              </label>
-              <input
-                id="email"
-                className="input"
-                type="email"
-                autoComplete="username"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                required
-              />
-            </div>
-            {mode !== "reset" && (
-              <div>
-                <label className="label" htmlFor="password">
-                  Password
-                </label>
-                <input
-                  id="password"
-                  className="input"
-                  type="password"
-                  autoComplete={
-                    mode === "register" ? "new-password" : "current-password"
-                  }
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                  minLength={mode === "register" ? 6 : undefined}
-                />
-              </div>
-            )}
-            {mode === "register" && (
-              <div>
-                <label className="label" htmlFor="confirm">
-                  Confirm password
-                </label>
-                <input
-                  id="confirm"
-                  className="input"
-                  type="password"
-                  autoComplete="new-password"
-                  value={confirm}
-                  onChange={(e) => setConfirm(e.target.value)}
-                  required
-                  minLength={6}
-                />
-              </div>
-            )}
-            {mode === "reset" && (
-              <p className="text-sm text-slate-400">
-                We&apos;ll email you a link to choose a new password.
-              </p>
-            )}
-            {(error || authError) && (
-              <p className="break-words text-sm text-red-400">
-                {error || authError}
-              </p>
-            )}
-            {message && (
-              <p className="break-words text-sm text-green-400">{message}</p>
-            )}
+      <form onSubmit={onSubmit} className="card space-y-4">
+        {mode === "register" && (
+          <div>
+            <label className="label" htmlFor="displayName">
+              Name
+            </label>
+            <input
+              id="displayName"
+              className="input"
+              type="text"
+              autoComplete="name"
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              required
+            />
+          </div>
+        )}
+        <div>
+          <label className="label" htmlFor="email">
+            Email
+          </label>
+          <input
+            id="email"
+            className="input"
+            type="email"
+            autoComplete="username"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            required
+          />
+        </div>
+        {mode !== "reset" && (
+          <div>
+            <label className="label" htmlFor="password">
+              Password
+            </label>
+            <input
+              id="password"
+              className="input"
+              type="password"
+              autoComplete={
+                mode === "register" ? "new-password" : "current-password"
+              }
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required
+              minLength={mode === "register" ? 6 : undefined}
+            />
+          </div>
+        )}
+        {mode === "register" && (
+          <div>
+            <label className="label" htmlFor="confirm">
+              Confirm password
+            </label>
+            <input
+              id="confirm"
+              className="input"
+              type="password"
+              autoComplete="new-password"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              required
+              minLength={6}
+            />
+          </div>
+        )}
+        {mode === "reset" && (
+          <p className="text-sm text-slate-400">
+            We&apos;ll email you a link to choose a new password.
+          </p>
+        )}
+        {(error || authError) && (
+          <p className="break-words text-sm text-red-400">
+            {error || authError}
+          </p>
+        )}
+        {message && (
+          <p className="break-words text-sm text-green-400">{message}</p>
+        )}
+        <button
+          className="btn btn-primary w-full"
+          disabled={busy || !configured}
+        >
+          {busy
+            ? mode === "signin"
+              ? "Signing in…"
+              : mode === "register"
+                ? "Creating account…"
+                : "Sending…"
+            : mode === "signin"
+              ? "Sign in"
+              : mode === "register"
+                ? "Create account"
+                : "Send reset link"}
+        </button>
+        {mode === "signin" && (
+          <p className="text-center text-sm text-slate-400">
             <button
-              className="btn btn-primary w-full"
-              disabled={busy || !configured}
+              type="button"
+              className="text-blue-400 hover:underline"
+              onClick={() => switchMode("reset")}
             >
-              {busy
-                ? mode === "signin"
-                  ? "Signing in…"
-                  : mode === "register"
-                    ? "Creating account…"
-                    : "Sending…"
-                : mode === "signin"
-                  ? "Sign in"
-                  : mode === "register"
-                    ? "Create account"
-                    : "Send reset link"}
+              Forgot password?
             </button>
-            {mode === "signin" && (
-              <p className="text-center text-sm text-slate-400">
-                <button
-                  type="button"
-                  className="text-blue-400 hover:underline"
-                  onClick={() => switchMode("reset")}
-                >
-                  Forgot password?
-                </button>
-              </p>
-            )}
-          </form>
-        </>
-      )}
+          </p>
+        )}
+      </form>
     </div>
   );
 }
 
 export default function SignInPage() {
   return (
-    <Suspense fallback={<div className="text-slate-400">Loading…</div>}>
+    <Suspense fallback={<AppLoadingShell />}>
       <SignInForm />
     </Suspense>
   );

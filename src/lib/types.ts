@@ -117,6 +117,31 @@ export interface TeamMemberPublic {
   maybe?: boolean;
 }
 
+/** Strip any non-public fields that may exist on stored team docs. */
+export function toTeamMemberPublic(raw: unknown): TeamMemberPublic | null {
+  if (!raw || typeof raw !== "object") return null;
+  const o = raw as Record<string, unknown>;
+  if (typeof o.playerId !== "string" || typeof o.displayName !== "string") {
+    return null;
+  }
+  const out: TeamMemberPublic = {
+    playerId: o.playerId,
+    displayName: o.displayName,
+  };
+  if (o.maybe === true) out.maybe = true;
+  return out;
+}
+
+export function sanitizeTeamMembers(list: unknown): TeamMemberPublic[] {
+  if (!Array.isArray(list)) return [];
+  const out: TeamMemberPublic[] = [];
+  for (const item of list) {
+    const m = toTeamMemberPublic(item);
+    if (m) out.push(m);
+  }
+  return out;
+}
+
 export interface GameTeams {
   gameId: string;
   teamA: TeamMemberPublic[];

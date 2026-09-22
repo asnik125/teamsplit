@@ -4,12 +4,14 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth, type AppViewMode } from "@/lib/firebase/auth-context";
 import { roleLabel } from "@/lib/roles";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 export function AppNav() {
   const { profile, isAdmin, showAdminUI, viewMode, setViewMode, signOut } =
     useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const isMobile = useIsMobile();
 
   if (!profile) return null;
 
@@ -19,7 +21,8 @@ export function AppNav() {
     if (mode === "player" && pathname.startsWith("/admin")) {
       router.replace("/");
     } else if (mode === "admin" && !pathname.startsWith("/admin")) {
-      router.replace("/admin/games");
+      // Mobile Admin shell lives on `/`; desktop keeps Manage Games entry.
+      router.replace(isMobile ? "/" : "/admin/games");
     }
   }
 

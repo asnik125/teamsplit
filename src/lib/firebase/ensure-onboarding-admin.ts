@@ -1,6 +1,8 @@
 import { getAdminDb } from "./admin";
 import type { Player, PlayerEvaluation, UserProfile } from "../types";
 import {
+  DUPLICATE_DISPLAY_NAME_MESSAGE,
+  findDisplayNameConflict,
   planSelfRegistration,
   playerIdForAuthUid,
 } from "../auth/onboarding";
@@ -22,11 +24,33 @@ export interface EnsureOnboardingResult {
   activatedPlayer: boolean;
 }
 
+async function assertDisplayNameAvailable(input: {
+  displayName: string;
+  excludePlayerId?: string | null;
+}): Promise<void> {
+  const snap = await getAdminDb().collection("players").get();
+  const players = snap.docs.map((d) => {
+    const data = d.data() as Player;
+    return { id: data.id || d.id, displayName: data.displayName };
+  });
+  const conflict = findDisplayNameConflict({
+    displayName: input.displayName,
+    players,
+    excludePlayerId: input.excludePlayerId,
+  });
+  if (conflict) {
+    throw Object.assign(new Error(DUPLICATE_DISPLAY_NAME_MESSAGE), {
+      status: 409,
+    });
+  }
+}
+
 /**
  * Idempotent Admin-SDK onboarding for a registered Auth user.
  * - users/{uid} (role player)
  * - players (new or ensure linked + active)
  * - playerEvaluations/{playerId} with all skills = 5 if missing (never overwrite)
+ * - rejects a display name already used by another player
  */
 export async function ensureRegisteredPlayerOnboarding(input: {
   uid: string;
@@ -70,6 +94,10 @@ export async function ensureRegisteredPlayerOnboarding(input: {
           status: 409,
         });
       }
+      await assertDisplayNameAvailable({
+        displayName: plan.player.displayName,
+        excludePlayerId: plan.playerId,
+      });
       await playerRef.set(
         {
           ...prev,
@@ -83,6 +111,10 @@ export async function ensureRegisteredPlayerOnboarding(input: {
       );
       if (!prev.active) activatedPlayer = true;
     } else {
+      await assertDisplayNameAvailable({
+        displayName: plan.player.displayName,
+        excludePlayerId: plan.playerId,
+      });
       await playerRef.set(plan.player);
       createdPlayer = true;
     }
@@ -93,7 +125,6 @@ export async function ensureRegisteredPlayerOnboarding(input: {
 
   const playerId = profile.playerId;
   if (!playerId) {
-    // Legacy / broken profile — attach deterministic player
     const newId = playerIdForAuthUid(uid);
     const plan = planSelfRegistration({
       uid,
@@ -104,6 +135,10 @@ export async function ensureRegisteredPlayerOnboarding(input: {
     if (!plan.ok) {
       throw Object.assign(new Error(plan.error), { status: plan.status });
     }
+    await assertDisplayNameAvailable({
+      displayName: plan.player.displayName,
+      excludePlayerId: newId,
+    });
     await db.collection("players").doc(newId).set(
       { ...plan.player, id: newId },
       { merge: true }
@@ -137,6 +172,10 @@ export async function ensureRegisteredPlayerOnboarding(input: {
     if (!plan.ok) {
       throw Object.assign(new Error(plan.error), { status: plan.status });
     }
+    await assertDisplayNameAvailable({
+      displayName: plan.player.displayName,
+      excludePlayerId: linkedPlayerId,
+    });
     await playerRef.set({
       ...plan.player,
       id: linkedPlayerId,
@@ -150,9 +189,7 @@ export async function ensureRegisteredPlayerOnboarding(input: {
     ? (evalSnap.data() as PlayerEvaluation)
     : null;
   if (shouldCreateDefaultEvaluation(existingEval)) {
-    await evalRef.set(
-      buildDefaultEvaluation(linkedPlayerId, now, uid)
-    );
+    await evalRef.set(buildDefaultEvaluation(linkedPlayerId, now, uid));
     createdEvaluation = true;
   }
 

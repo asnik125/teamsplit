@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   addCalendarDays,
+  formatTimeLocal12,
+  normalizeTimeLocalHHmm,
+  notificationTimeSelectOptions,
   vancouverLocalToUtc,
   zonedCalendarDate,
 } from "@/lib/notifications/timezone";
@@ -320,6 +323,66 @@ describe("due slots / game changes", () => {
     );
     expect(slots.some((s) => s.notificationType === "game_reminder")).toBe(
       true
+    );
+  });
+});
+
+describe("notification time dropdown (15-minute options)", () => {
+  it("builds 96 options on a 15-minute grid with HH:mm values", () => {
+    const options = notificationTimeSelectOptions();
+    expect(options).toHaveLength(96);
+    expect(options[0]).toEqual({ value: "00:00", label: "12:00 AM" });
+    expect(options.find((o) => o.value === "16:00")).toEqual({
+      value: "16:00",
+      label: "04:00 PM",
+    });
+    expect(options.find((o) => o.value === "18:00")).toEqual({
+      value: "18:00",
+      label: "06:00 PM",
+    });
+    expect(options.find((o) => o.value === "19:00")).toEqual({
+      value: "19:00",
+      label: "07:00 PM",
+    });
+    expect(options.at(-1)).toEqual({ value: "23:45", label: "11:45 PM" });
+    // Every option stores canonical HH:mm (not 12-hour text)
+    for (const o of options) {
+      expect(o.value).toMatch(/^\d{2}:\d{2}$/);
+      expect(o.label).toMatch(/^\d{2}:\d{2} (AM|PM)$/);
+      expect(normalizeTimeLocalHHmm(o.value)).toBe(o.value);
+    }
+  });
+
+  it("keeps existing saved HH:mm selected even off the 15-minute grid", () => {
+    const options = notificationTimeSelectOptions("19:07");
+    expect(options.some((o) => o.value === "19:07")).toBe(true);
+    expect(options.find((o) => o.value === "19:07")?.label).toBe("07:07 PM");
+  });
+
+  it("normalizes H:mm to HH:mm for storage compatibility", () => {
+    expect(normalizeTimeLocalHHmm("9:00")).toBe("09:00");
+    expect(normalizeTimeLocalHHmm("16:00")).toBe("16:00");
+    expect(formatTimeLocal12("16:00")).toBe("04:00 PM");
+    expect(formatTimeLocal12("19:00")).toBe("07:00 PM");
+  });
+
+  it("selecting a dropdown option still feeds HH:mm into due-at logic", () => {
+    const selected = notificationTimeSelectOptions().find(
+      (o) => o.label === "07:00 PM"
+    );
+    expect(selected?.value).toBe("19:00");
+    const g = game({ id: "g1", date: "2026-09-24", startTime: "19:30" });
+    const due = computeNotificationDueAt(g, {
+      enabled: true,
+      daysBefore: 1,
+      timeLocal: selected!.value,
+    });
+    expect(due.toISOString()).toBe(
+      computeNotificationDueAt(g, {
+        enabled: true,
+        daysBefore: 1,
+        timeLocal: "19:00",
+      }).toISOString()
     );
   });
 });

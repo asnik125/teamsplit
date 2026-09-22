@@ -2,6 +2,7 @@
 
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
+import { AppLoadingShell } from "@/components/AppLoadingShell";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { isStaffRole } from "@/lib/roles";
 
@@ -12,13 +13,21 @@ export function RequireAuth({
   children: React.ReactNode;
   adminOnly?: boolean;
 }) {
-  const { user, profile, loading, configured, error, signOut, showAdminUI } =
-    useAuth();
+  const {
+    user,
+    profile,
+    loading,
+    authResolved,
+    configured,
+    error,
+    signOut,
+    showAdminUI,
+  } = useAuth();
   const router = useRouter();
   const pathname = usePathname();
 
   useEffect(() => {
-    if (loading) return;
+    if (!authResolved || loading) return;
     if (!configured) return;
     // Stay on page to show error rather than bounce forever when profile is missing.
     if (error) return;
@@ -40,6 +49,7 @@ export function RequireAuth({
     }
   }, [
     loading,
+    authResolved,
     configured,
     user,
     profile,
@@ -50,12 +60,8 @@ export function RequireAuth({
     showAdminUI,
   ]);
 
-  if (loading) {
-    return (
-      <div className="flex min-h-[40vh] items-center justify-center text-slate-400">
-        Loading…
-      </div>
-    );
+  if (!authResolved || loading) {
+    return <AppLoadingShell />;
   }
 
   if (!configured) {
@@ -82,9 +88,15 @@ export function RequireAuth({
     );
   }
 
-  if (!user || !profile?.active) return null;
-  if (adminOnly && !isStaffRole(profile.role)) return null;
-  if (adminOnly && !showAdminUI) return null;
+  if (!user || !profile?.active) {
+    return <AppLoadingShell />;
+  }
+  if (adminOnly && !isStaffRole(profile.role)) {
+    return <AppLoadingShell />;
+  }
+  if (adminOnly && !showAdminUI) {
+    return <AppLoadingShell />;
+  }
 
   return <>{children}</>;
 }
