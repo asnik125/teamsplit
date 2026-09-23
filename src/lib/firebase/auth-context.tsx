@@ -25,7 +25,16 @@ import { provisionTeamSplitAccount } from "./complete-onboarding";
 import type { UserProfile } from "../types";
 import { isStaffRole } from "../roles";
 import { formatUnknownError } from "../errors";
-import { DUPLICATE_DISPLAY_NAME_MESSAGE, ONBOARDING_USER_MESSAGE } from "../auth/onboarding";
+import {
+  DUPLICATE_DISPLAY_NAME_MESSAGE,
+  ONBOARDING_USER_MESSAGE,
+} from "../auth/onboarding";
+import { createAuthTiming } from "../auth/auth-timing";
+import {
+  isHealthyUserProfile,
+  needsBlockingProvision,
+  shouldSkipAuthObserverResolve,
+} from "../auth/session-profile";
 
 export type AppViewMode = "admin" | "player";
 
@@ -114,9 +123,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [viewMode, setViewModeState] = useState<AppViewMode>(() =>
     readStoredViewMode()
   );
-  /** Avoid concurrent onboard races from signUp + onAuthStateChanged. */
+  /** Dedup concurrent blocking provision (signup / incomplete login). */
   const onboardInFlight = useRef<Promise<UserProfile> | null>(null);
   const profileUidRef = useRef<string | null>(null);
+  const sessionHealthyRef = useRef(false);
   const applyGeneration = useRef(0);
 
   const setViewMode = useCallback((mode: AppViewMode) => {
@@ -128,9 +138,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const ensureProfile = useCallback(
-    async (authUser: User, displayName?: string | null): Promise<UserProfile> => {
-      // Always run provision — idempotent; backfills missing evaluation / active flag.
+  const runBlockingProvision = useCallback(
+    async (
+      authUser: User,
+      displayName?: string | null
+    ): Promise<UserProfile> => {
       if (!onboardInFlight.current) {
         onboardInFlight.current = provisionTeamSplitAccount(
           authUser,
@@ -140,6 +152,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       }
       return onboardInFlight.current;
+    },
+    []
+  );
+
+  const commitHealthySession = useCallback(
+    (authUser: User, nextProfile: UserProfile) => {
+      profileUidRef.current = nextProfile.uid;
+      sessionHealthyRef.current = true;
+      setUser(authUser);
+      setProfile(nextProfile);
+      setError(null);
+      setLoading(false);
+      setAuthResolved(true);
     },
     []
   );
@@ -158,14 +183,31 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const applyAuthState = async (next: User | null) => {
       const gen = ++applyGeneration.current;
+      const timing = createAuthTiming("observer");
       try {
         if (cancelled) return;
 
         if (!next) {
           profileUidRef.current = null;
+          sessionHealthyRef.current = false;
           setUser(null);
           setProfile(null);
           setError(null);
+          timing.mark("signed_out");
+          return;
+        }
+
+        timing.mark("auth_user", { uidLen: next.uid.length });
+
+        if (
+          shouldSkipAuthObserverResolve({
+            nextUid: next.uid,
+            resolvedUid: profileUidRef.current,
+            sessionHealthy: sessionHealthyRef.current,
+          })
+        ) {
+          timing.mark("skip_already_resolved");
+          setUser(next);
           return;
         }
 
@@ -175,38 +217,61 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
 
         setUser(next);
+        timing.mark("getUserProfile_start");
         let p = await getUserProfile(getClientDb(), next.uid);
+        timing.mark("getUserProfile_complete", {
+          healthy: isHealthyUserProfile(p),
+        });
         if (cancelled || gen !== applyGeneration.current) return;
 
-        // Missing profile OR incomplete onboarding (e.g. no evaluation) → provision
+        if (isHealthyUserProfile(p)) {
+          timing.mark("profileReady");
+          commitHealthySession(next, p);
+          timing.mark("sessionReady", { blockingProvision: false });
+          return;
+        }
+
+        timing.mark("blocking_provision_start");
         try {
-          p = await ensureProfile(next, next.displayName);
+          p = await runBlockingProvision(next, next.displayName);
+          timing.mark("blocking_provision_complete");
         } catch (err) {
           if (cancelled || gen !== applyGeneration.current) return;
           console.error("Onboarding failed", err);
-          if (!p) {
+          if (!p || needsBlockingProvision(p)) {
             profileUidRef.current = null;
+            sessionHealthyRef.current = false;
             setProfile(null);
             setError(ONBOARDING_USER_MESSAGE);
             return;
           }
-          // Profile exists but eval backfill failed — still allow session
         }
         if (cancelled || gen !== applyGeneration.current) return;
-        profileUidRef.current = p.uid;
-        setProfile(p);
-        setError(null);
+        if (!isHealthyUserProfile(p)) {
+          profileUidRef.current = null;
+          sessionHealthyRef.current = false;
+          setProfile(null);
+          setError(ONBOARDING_USER_MESSAGE);
+          return;
+        }
+        timing.mark("profileReady");
+        commitHealthySession(next, p);
+        timing.mark("sessionReady", { blockingProvision: true });
       } catch (err) {
         if (cancelled || gen !== applyGeneration.current) return;
         console.error("Auth/profile load failed", err);
         setUser(next);
         profileUidRef.current = null;
+        sessionHealthyRef.current = false;
         setProfile(null);
         setError(ONBOARDING_USER_MESSAGE);
       } finally {
         if (!cancelled && gen === applyGeneration.current) {
-          setLoading(false);
+          if (!sessionHealthyRef.current) {
+            setLoading(false);
+          }
           setAuthResolved(true);
+          timing.mark("observer_finally");
         }
       }
     };
@@ -228,6 +293,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             if (cancelled) return;
             console.error("onAuthStateChanged error", authErr);
             profileUidRef.current = null;
+            sessionHealthyRef.current = false;
             setUser(null);
             setProfile(null);
             setError(formatUnknownError(authErr));
@@ -248,26 +314,57 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       unsub?.();
     };
-  }, [configured, ensureProfile]);
+  }, [configured, commitHealthySession, runBlockingProvision]);
 
-  const signIn = useCallback(async (email: string, password: string) => {
-    setError(null);
-    setLoading(true);
-    try {
-      const cred = await signInWithEmailAndPassword(
-        getClientAuth(),
-        email,
-        password
-      );
-      // Resolve profile here so UI stays on the loading shell until role is known.
-      // onAuthStateChanged may also run; generation + onboardInFlight de-dupe work.
-      let p = await getUserProfile(getClientDb(), cred.user.uid);
+  const signIn = useCallback(
+    async (email: string, password: string) => {
+      setError(null);
+      setLoading(true);
+      const timing = createAuthTiming("signIn");
+      timing.mark("signIn_start");
       try {
-        p = await ensureProfile(cred.user, cred.user.displayName);
-      } catch (err) {
-        console.error("Onboarding failed", err);
-        if (!p) {
+        const cred = await signInWithEmailAndPassword(
+          getClientAuth(),
+          email,
+          password
+        );
+        timing.mark("firebase_auth_resolved");
+
+        timing.mark("getUserProfile_start");
+        let p = await getUserProfile(getClientDb(), cred.user.uid);
+        timing.mark("getUserProfile_complete", {
+          healthy: isHealthyUserProfile(p),
+        });
+
+        if (isHealthyUserProfile(p)) {
+          timing.mark("profileReady");
+          commitHealthySession(cred.user, p);
+          timing.mark("sessionReady", {
+            blockingProvisionCalls: 0,
+          });
+          return;
+        }
+
+        timing.mark("blocking_provision_start");
+        try {
+          p = await runBlockingProvision(cred.user, cred.user.displayName);
+          timing.mark("blocking_provision_complete");
+        } catch (err) {
+          console.error("Onboarding failed", err);
+          if (!p || needsBlockingProvision(p)) {
+            profileUidRef.current = null;
+            sessionHealthyRef.current = false;
+            setUser(cred.user);
+            setProfile(null);
+            setError(ONBOARDING_USER_MESSAGE);
+            setLoading(false);
+            setAuthResolved(true);
+            throw new Error(ONBOARDING_USER_MESSAGE);
+          }
+        }
+        if (!isHealthyUserProfile(p)) {
           profileUidRef.current = null;
+          sessionHealthyRef.current = false;
           setUser(cred.user);
           setProfile(null);
           setError(ONBOARDING_USER_MESSAGE);
@@ -275,29 +372,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setAuthResolved(true);
           throw new Error(ONBOARDING_USER_MESSAGE);
         }
+        timing.mark("profileReady");
+        commitHealthySession(cred.user, p);
+        timing.mark("sessionReady", { blockingProvisionCalls: 1 });
+      } catch (err) {
+        if (err instanceof Error && err.message === ONBOARDING_USER_MESSAGE) {
+          throw err;
+        }
+        const message = mapAuthError(err);
+        setError(message);
+        setLoading(false);
+        setAuthResolved(true);
+        throw new Error(message);
       }
-      profileUidRef.current = p.uid;
-      setUser(cred.user);
-      setProfile(p);
-      setError(null);
-      setLoading(false);
-      setAuthResolved(true);
-    } catch (err) {
-      if (err instanceof Error && err.message === ONBOARDING_USER_MESSAGE) {
-        throw err;
-      }
-      const message = mapAuthError(err);
-      setError(message);
-      setLoading(false);
-      setAuthResolved(true);
-      throw new Error(message);
-    }
-  }, [ensureProfile]);
+    },
+    [commitHealthySession, runBlockingProvision]
+  );
 
   const signUp = useCallback(
     async (email: string, password: string, displayName: string) => {
       setError(null);
       setLoading(true);
+      const timing = createAuthTiming("signUp");
+      timing.mark("signUp_start");
       const auth = getClientAuth();
       let createdUser: User | null = null;
       try {
@@ -307,22 +404,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           password
         );
         createdUser = cred.user;
+        timing.mark("firebase_auth_resolved");
         const name = displayName.trim();
         if (name) {
           await updateProfile(cred.user, { displayName: name });
         }
-        // Shared in-flight promise with applyAuthState — no race / no orphan profile.
-        const p = await ensureProfile(cred.user, name);
-        profileUidRef.current = p.uid;
-        setUser(cred.user);
-        setProfile(p);
-        setError(null);
-        setLoading(false);
-        setAuthResolved(true);
+        // New accounts have no profile — blocking provision required for
+        // users + player link + role/active before UI entry.
+        timing.mark("blocking_provision_start");
+        const p = await runBlockingProvision(cred.user, name);
+        timing.mark("blocking_provision_complete");
+        if (!isHealthyUserProfile(p)) {
+          throw new Error(ONBOARDING_USER_MESSAGE);
+        }
+        timing.mark("profileReady");
+        commitHealthySession(cred.user, p);
+        timing.mark("sessionReady", { blockingProvisionCalls: 1 });
       } catch (err) {
         const message =
           err instanceof Error ? err.message : mapAuthError(err);
-        // Roll back Auth account if TeamSplit rejected a taken display name.
         if (
           createdUser &&
           (message === DUPLICATE_DISPLAY_NAME_MESSAGE ||
@@ -335,6 +435,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           }
           createdUser = null;
           profileUidRef.current = null;
+          sessionHealthyRef.current = false;
           setUser(null);
           setProfile(null);
           setError(DUPLICATE_DISPLAY_NAME_MESSAGE);
@@ -361,7 +462,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw new Error(mapped);
       }
     },
-    [ensureProfile]
+    [commitHealthySession, runBlockingProvision]
   );
 
   const resetPassword = useCallback(async (email: string) => {
@@ -386,6 +487,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setError(null);
     setLoading(true);
     profileUidRef.current = null;
+    sessionHealthyRef.current = false;
     try {
       await firebaseSignOut(getClientAuth());
       setUser(null);
@@ -403,17 +505,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!user) return;
     try {
       let p = await getUserProfile(getClientDb(), user.uid);
-      if (!p) {
-        p = await ensureProfile(user, user.displayName);
+      if (needsBlockingProvision(p)) {
+        p = await runBlockingProvision(user, user.displayName);
+      }
+      if (!isHealthyUserProfile(p)) {
+        setError(ONBOARDING_USER_MESSAGE);
+        return;
       }
       profileUidRef.current = p.uid;
+      sessionHealthyRef.current = true;
       setProfile(p);
       setError(null);
     } catch (err) {
       console.error(err);
       setError(ONBOARDING_USER_MESSAGE);
     }
-  }, [user, ensureProfile]);
+  }, [user, runBlockingProvision]);
 
   const clearError = useCallback(() => setError(null), []);
 
