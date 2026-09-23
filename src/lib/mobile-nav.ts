@@ -11,13 +11,20 @@ export type AdminMobileTab =
   | "team-builder"
   | "manage-games"
   | "players"
-  | "settings";
-export type TeamBuilderFrame = "participants" | "teams";
+  | "notifications"
+  | "profile";
+export type TeamBuilderFrame = "teams" | "participants";
 
 export const PLAYER_MOBILE_FRAMES: PlayerMobileFrame[] = [
   "attendance",
   "teams",
   "profile",
+];
+
+/** Admin Team Builder frames in display order: Teams first (default). */
+export const TEAM_BUILDER_FRAMES: TeamBuilderFrame[] = [
+  "teams",
+  "participants",
 ];
 
 export function defaultPlayerMobileFrame(): PlayerMobileFrame {
@@ -26,6 +33,10 @@ export function defaultPlayerMobileFrame(): PlayerMobileFrame {
 
 export function defaultAdminMobileTab(): AdminMobileTab {
   return "team-builder";
+}
+
+export function defaultTeamBuilderFrame(): TeamBuilderFrame {
+  return "teams";
 }
 
 export function adjacentPlayerFrame(
@@ -44,9 +55,13 @@ export function adjacentTeamBuilderFrame(
   current: TeamBuilderFrame,
   direction: -1 | 1
 ): TeamBuilderFrame {
-  if (direction < 0) return "participants";
-  if (direction > 0) return "teams";
-  return current;
+  const i = TEAM_BUILDER_FRAMES.indexOf(current);
+  if (i < 0) return defaultTeamBuilderFrame();
+  const next = Math.min(
+    TEAM_BUILDER_FRAMES.length - 1,
+    Math.max(0, i + direction)
+  );
+  return TEAM_BUILDER_FRAMES[next]!;
 }
 
 /**
@@ -93,5 +108,7 @@ export function isPlayerSafeTeamMember(
     "workrate",
   ];
   if (forbidden.some((k) => k in member && member[k] != null)) return false;
-  return typeof member.playerId === "string" && typeof member.displayName === "string";
+  return (
+    typeof member.playerId === "string" && typeof member.displayName === "string"
+  );
 }

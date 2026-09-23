@@ -5,6 +5,7 @@ import {
   DEFAULT_MIN_PLAYING_FOR_TEAMS,
   isIncludedForTeams,
   confirmedProgressLabel,
+  confirmedAttendanceLabel,
 } from "@/lib/team-sync";
 import type { PlayerRatings, RatedPlayer } from "@/lib/types";
 import { RATING_KEYS } from "@/lib/types";
@@ -64,6 +65,15 @@ describe("team inclusion + sync", () => {
 
   it("defaults minimum 6", () => {
     expect(DEFAULT_MIN_PLAYING_FOR_TEAMS).toBe(6);
-    expect(confirmedProgressLabel(5, 6)).toBe("5 / 6 players confirmed");
+    expect(confirmedProgressLabel(5, 6)).toBe("5 players confirmed");
+  });
+
+  it("confirmed label shows playing + maybe without minPlaying capacity", () => {
+    expect(
+      confirmedAttendanceLabel({ playingCount: 10, maybeCount: 1 })
+    ).toBe("10 confirmed + 1 maybe");
+    expect(
+      confirmedAttendanceLabel({ playingCount: 10, maybeCount: 0 })
+    ).toBe("10 players confirmed");
   });
 });

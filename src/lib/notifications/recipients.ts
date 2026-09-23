@@ -5,6 +5,10 @@ import type {
   Player,
   UserProfile,
 } from "../types";
+import {
+  roleBlocksGameNotifications,
+  wantsEmailNotifications,
+} from "./email-opt-in";
 
 export interface NotificationRecipient {
   userId: string;
@@ -23,7 +27,8 @@ function isValidEmail(email: string | null | undefined): email is string {
 /**
  * Resolve recipients for a notification.
  * Email source: users/{uid}.email (authoritative Auth-linked profile).
- * Requires: active, emailNotifications === true, valid email.
+ * Requires: active, notifications opt-in (default ON), valid email.
+ * Admin role does not exclude — Admin+Player is treated like Player for eligibility.
  * Missing email → skip (caller logs); never fails the whole job.
  */
 export function resolveRecipients(input: {
@@ -49,8 +54,11 @@ export function resolveRecipients(input: {
       skipped.push({ userId: user.uid, reason: "inactive" });
       continue;
     }
-    // Explicit true required — existing false stays opted out.
-    if (user.emailNotifications !== true) {
+    if (roleBlocksGameNotifications(user.role)) {
+      skipped.push({ userId: user.uid, reason: "role_blocked" });
+      continue;
+    }
+    if (!wantsEmailNotifications(user)) {
       skipped.push({ userId: user.uid, reason: "emailNotifications_off" });
       continue;
     }

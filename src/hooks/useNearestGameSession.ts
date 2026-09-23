@@ -64,6 +64,7 @@ export function useNearestGameSession() {
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [updatingTeams, setUpdatingTeams] = useState(false);
+  const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
 
   const canEditPlayer = useCallback(
     (playerId: string) => {
@@ -123,8 +124,27 @@ export function useNearestGameSession() {
     reload().catch((e) => setError(formatUnknownError(e)));
   }, [reload]);
 
-  const teamsGame = useMemo(() => nextUpcomingGame(games), [games]);
-  const teamsGameId = teamsGame?.id ?? null;
+  // Keep selection when possible; otherwise fall back to nearest upcoming.
+  useEffect(() => {
+    if (games.length === 0) {
+      setSelectedGameId(null);
+      return;
+    }
+    if (selectedGameId && games.some((g) => g.id === selectedGameId)) return;
+    setSelectedGameId(nextUpcomingGame(games)?.id ?? games[0]?.id ?? null);
+  }, [games, selectedGameId]);
+
+  const selectedGame = useMemo(
+    () => games.find((g) => g.id === selectedGameId) ?? null,
+    [games, selectedGameId]
+  );
+  const teamsGame = selectedGame;
+  const teamsGameId = selectedGame?.id ?? null;
+
+  function selectGame(gameId: string) {
+    if (!games.some((g) => g.id === gameId)) return;
+    setSelectedGameId(gameId);
+  }
 
   useEffect(() => {
     if (!teamsGameId) {
@@ -266,6 +286,12 @@ export function useNearestGameSession() {
         isIncludedForTeams(cellStatus(teamsGameId, p.id), includeMaybe)
       ).length
     : 0;
+  const playingCount = teamsGameId
+    ? players.filter((p) => cellStatus(teamsGameId, p.id) === "playing").length
+    : 0;
+  const maybeCount = teamsGameId
+    ? players.filter((p) => cellStatus(teamsGameId, p.id) === "maybe").length
+    : 0;
 
   const myStatus =
     teamsGameId && myPlayerId
@@ -276,6 +302,8 @@ export function useNearestGameSession() {
     ? buildPlayerGameView({
         myStatus,
         myPlayerId,
+        playingCount,
+        maybeCount,
         includedCount,
         currentTeams: teams,
         minPlaying,
@@ -293,6 +321,11 @@ export function useNearestGameSession() {
     players,
     grid,
     teams,
+    /** Currently selected game (mobile date dropdown). */
+    selectedGame,
+    selectedGameId: teamsGameId,
+    selectGame,
+    /** @deprecated alias — same as selectedGame */
     teamsGame,
     teamsGameId,
     teamsView,

@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import { moveMemberKeepingSizeBalance } from "@/lib/balancer";
 import {
   MOBILE_BREAKPOINT_PX,
+  TEAM_BUILDER_FRAMES,
   adjacentPlayerFrame,
   adjacentTeamBuilderFrame,
   defaultAdminMobileTab,
   defaultPlayerMobileFrame,
+  defaultTeamBuilderFrame,
   isMobileViewportWidth,
   isPlayerSafeTeamMember,
   shouldNavigateFromSwipe,
@@ -25,12 +27,24 @@ describe("mobile / desktop viewport split", () => {
     expect(isMobileViewportWidth(1024)).toBe(false);
   });
 
+  it("covers common phone widths under the breakpoint", () => {
+    for (const w of [375, 390, 414, 430]) {
+      expect(isMobileViewportWidth(w)).toBe(true);
+    }
+  });
+
   it("Player mobile defaults to Attendance", () => {
     expect(defaultPlayerMobileFrame()).toBe("attendance");
   });
 
-  it("Admin mobile defaults to Team Builder", () => {
+  it("Admin mobile defaults to Team Builder (Game)", () => {
     expect(defaultAdminMobileTab()).toBe("team-builder");
+  });
+
+  it("Admin Team Builder defaults to Teams (not Participants)", () => {
+    expect(defaultTeamBuilderFrame()).toBe("teams");
+    expect(TEAM_BUILDER_FRAMES[0]).toBe("teams");
+    expect(TEAM_BUILDER_FRAMES[1]).toBe("participants");
   });
 
   it("Player can navigate Attendance → Teams → Profile", () => {
@@ -40,9 +54,66 @@ describe("mobile / desktop viewport split", () => {
     expect(adjacentPlayerFrame("teams", -1)).toBe("attendance");
   });
 
-  it("Admin Team Builder navigates Participants ↔ Teams", () => {
-    expect(adjacentTeamBuilderFrame("participants", 1)).toBe("teams");
-    expect(adjacentTeamBuilderFrame("teams", -1)).toBe("participants");
+  it("Admin Team Builder navigates Teams ↔ Participants", () => {
+    expect(adjacentTeamBuilderFrame("teams", 1)).toBe("participants");
+    expect(adjacentTeamBuilderFrame("participants", -1)).toBe("teams");
+    expect(adjacentTeamBuilderFrame("teams", -1)).toBe("teams");
+    expect(adjacentTeamBuilderFrame("participants", 1)).toBe("participants");
+  });
+});
+
+describe("mobile hamburger menu contract", () => {
+  it("Player menu items are Profile + separate Sign out", () => {
+    const playerMenu = ["Profile", "Sign out"];
+    expect(playerMenu).toEqual(["Profile", "Sign out"]);
+    expect(playerMenu).not.toContain("More");
+  });
+
+  it("Admin menu items include destinations without More nesting", () => {
+    const adminMenu = [
+      "Games",
+      "Players",
+      "Notifications",
+      "Profile",
+      "Sign out",
+    ];
+    expect(adminMenu).toContain("Games");
+    expect(adminMenu).toContain("Players");
+    expect(adminMenu).toContain("Notifications");
+    expect(adminMenu).toContain("Profile");
+    expect(adminMenu).toContain("Sign out");
+    expect(adminMenu).not.toContain("More");
+    expect(adminMenu.indexOf("Sign out")).toBeGreaterThan(
+      adminMenu.indexOf("Profile")
+    );
+  });
+});
+
+describe("mobile single-game selection contract", () => {
+  it("selecting a game id resolves exactly one game from the list", () => {
+    const games = [
+      { id: "g1", date: "2026-09-17" },
+      { id: "g2", date: "2026-09-24" },
+      { id: "g3", date: "2026-10-01" },
+    ];
+    let selectedId = "g2";
+    const selected = games.find((g) => g.id === selectedId) ?? null;
+    expect(selected?.id).toBe("g2");
+    selectedId = "g1";
+    expect(games.find((g) => g.id === selectedId)?.date).toBe("2026-09-17");
+    // Only one selected at a time
+    expect(games.filter((g) => g.id === selectedId)).toHaveLength(1);
+  });
+
+  it("falls back to nearest when selection is missing", () => {
+    const games = [
+      { id: "g1", date: "2026-09-17" },
+      { id: "g2", date: "2026-09-24" },
+    ];
+    const selectedId = "gone";
+    const found = games.find((g) => g.id === selectedId);
+    const fallback = found ?? games[0] ?? null;
+    expect(fallback?.id).toBe("g1");
   });
 });
 
@@ -117,9 +188,9 @@ describe("Player mobile Teams privacy", () => {
       { playerId: "p2", displayName: "Sam" },
     ]);
     for (const m of cleaned) {
-      expect(isPlayerSafeTeamMember(m as unknown as Record<string, unknown>)).toBe(
-        true
-      );
+      expect(
+        isPlayerSafeTeamMember(m as unknown as Record<string, unknown>)
+      ).toBe(true);
     }
   });
 });

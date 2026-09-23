@@ -969,6 +969,8 @@ body {
   min-height: calc(100dvh - 1.2rem);
   gap: 0.5rem;
   touch-action: pan-y;
+  max-width: 100%;
+  overflow-x: hidden;
 }
 
 .m-chrome {
@@ -987,6 +989,8 @@ body {
 .m-chrome-logo {
   font-weight: 700;
   font-size: 1.05rem;
+  color: var(--text-main);
+  text-decoration: none;
 }
 
 .m-chrome-title {
@@ -1080,6 +1084,153 @@ body {
   border-color: var(--accent-blue);
 }
 
+.m-game-select {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.m-game-select-face {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.m-game-select-native {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+  z-index: 2;
+  font-size: 1rem; /* iOS zoom avoidance */
+}
+
+.m-game-select-copy {
+  flex: 1;
+  min-width: 0;
+  pointer-events: none;
+}
+
+.m-game-select-copy .m-game-date,
+.m-game-select-copy .m-game-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-game-select-chevron {
+  flex-shrink: 0;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  margin-top: 0.15rem;
+  pointer-events: none;
+}
+
+.m-att {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.m-att-scroll {
+  overflow-x: auto;
+  max-width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 0.45rem;
+  background: var(--bg-card);
+}
+
+.m-att-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.m-att-table th,
+.m-att-table td {
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.m-att-table tr:last-child th,
+.m-att-table tr:last-child td {
+  border-bottom: none;
+}
+
+.m-att-corner,
+.m-att-date-h {
+  padding: 0.45rem 0.55rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  text-align: left;
+  background: #020617;
+}
+
+.m-att-date-h {
+  width: 7.25rem;
+  text-align: center;
+  color: #93c5fd;
+}
+
+.m-att-player {
+  padding: 0.4rem 0.55rem;
+  font-weight: 600;
+  font-size: 0.82rem;
+  text-align: left;
+  color: var(--text-main);
+  max-width: 0;
+}
+
+.m-att-player-name {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-att-player-me {
+  box-shadow: inset 3px 0 0 var(--accent-blue);
+  background: #172554;
+}
+
+.m-att-row-me .m-att-cell {
+  background: #172554;
+}
+
+.m-att-row-alt .m-att-player,
+.m-att-row-alt .m-att-cell {
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.m-att-cell {
+  padding: 0.35rem 0.4rem;
+  width: 7.25rem;
+}
+
+.m-att-cell .attendance-status-compact,
+.m-att-cell .attendance-badge {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+}
+
 .m-dots {
   display: flex;
   justify-content: center;
@@ -1134,8 +1285,23 @@ body {
   font-size: 0.8rem;
 }
 
+.m-nogame-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  margin-top: 0.15rem;
+}
+
+.m-nogame-toggle input {
+  width: 1rem;
+  height: 1rem;
+}
+
 .m-nogame {
-  margin: 0.35rem 0 0;
+  margin: 0.15rem 0 0;
   color: #fbbf24;
   font-weight: 700;
   font-size: 0.8rem;
@@ -1263,6 +1429,10 @@ body {
   margin: 0;
   font-weight: 600;
   font-size: 0.9rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 .m-inline-select {
@@ -1486,12 +1656,4 @@ body {
 .m-badge-off {
   background: #334155;
   color: #cbd5e1;
-}
-
-.m-nogame-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  margin-top: 0.45rem;
-  font-size: 0.8rem;
 }

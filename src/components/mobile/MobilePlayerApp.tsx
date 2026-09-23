@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { doc, updateDoc } from "firebase/firestore";
 import { MobileChrome } from "./MobileChrome";
+import { MobileGameSelector } from "./MobileGameSelector";
+import { MobileAttendanceTable } from "./MobileAttendanceTable";
 import {
   useNearestGameSession,
   useSwipeFrames,
@@ -13,8 +15,6 @@ import {
   defaultPlayerMobileFrame,
   type PlayerMobileFrame,
 } from "@/lib/mobile-nav";
-import { formatDisplayDate, formatDisplayTime } from "@/lib/schedule";
-import { gameHasNoGame } from "@/lib/no-game";
 import type { AttendanceStatus } from "@/lib/types";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
@@ -35,13 +35,6 @@ const STATUS_BTN: {
   { value: "not_playing", label: "Not playing", className: "m-status-not" },
 ];
 
-function statusLabel(s: AttendanceStatus): string {
-  if (s === "playing") return "Playing";
-  if (s === "maybe") return "Maybe";
-  if (s === "not_playing") return "Not playing";
-  return "—";
-}
-
 function initials(name: string): string {
   const parts = name.trim().split(/\s+/);
   return ((parts[0]?.[0] ?? "") + (parts[1]?.[0] ?? "")).toUpperCase() || "?";
@@ -56,6 +49,7 @@ export function MobilePlayerApp({
   const { signOut, profile, refreshProfile } = useAuth();
   const router = useRouter();
   const [frame, setFrame] = useState<PlayerMobileFrame>(initialFrame);
+  const [menuOpen, setMenuOpen] = useState(false);
   const dragActiveRef = useRef(false);
 
   useEffect(() => {
@@ -63,58 +57,65 @@ export function MobilePlayerApp({
   }, [initialFrame]);
 
   const swipe = useSwipeFrames({
-    enabled: true,
+    enabled: frame !== "profile",
     dragActiveRef,
     onPrev: () => setFrame((f) => adjacentPlayerFrame(f, -1)),
     onNext: () => setFrame((f) => adjacentPlayerFrame(f, 1)),
   });
 
-  const game = session.teamsGame;
+  const game = session.selectedGame;
   const locked = game ? !session.canEditAttendanceOnGame(game) : true;
-  const noGame = game ? gameHasNoGame(game) : false;
 
-  const filterCounts = useMemo(() => {
-    if (!game) return { all: 0, playing: 0, maybe: 0, not: 0 };
-    let playing = 0;
-    let maybe = 0;
-    let not = 0;
-    for (const p of session.players) {
-      const st = session.cellStatus(game.id, p.id);
-      if (st === "playing") playing += 1;
-      else if (st === "maybe") maybe += 1;
-      else if (st === "not_playing") not += 1;
-    }
-    return { all: session.players.length, playing, maybe, not };
-  }, [game, session]);
-
-  const [listFilter, setListFilter] = useState<
-    "all" | "playing" | "maybe" | "not"
-  >("all");
-
-  const visiblePlayers = session.players.filter((p) => {
-    if (!game || listFilter === "all") return true;
-    const st = session.cellStatus(game.id, p.id);
-    if (listFilter === "playing") return st === "playing";
-    if (listFilter === "maybe") return st === "maybe";
-    return st === "not_playing";
-  });
+  async function handleSignOut() {
+    setMenuOpen(false);
+    await signOut();
+    router.replace("/sign-in");
+  }
 
   return (
     <div className="m-app" {...swipe}>
-      <MobileChrome title={frame === "profile" ? "Profile" : "Game"} />
+      <MobileChrome
+        title={frame === "profile" ? "Profile" : "Game"}
+        onOpenMenu={() => setMenuOpen((v) => !v)}
+        menu={
+          menuOpen ? (
+            <nav className="m-menu" aria-label="Player menu">
+              <button
+                type="button"
+                className={`m-menu-item${frame === "profile" ? " m-menu-on" : ""}`}
+                onClick={() => {
+                  setFrame("profile");
+                  setMenuOpen(false);
+                }}
+              >
+                Profile
+              </button>
+              <button
+                type="button"
+                className="m-menu-item"
+                onClick={() => handleSignOut()}
+              >
+                Sign out
+              </button>
+            </nav>
+          ) : null
+        }
+      />
       {session.error && <p className="m-error">{session.error}</p>}
 
-      <div className="m-dots" aria-hidden>
-        {(["attendance", "teams", "profile"] as const).map((f) => (
-          <button
-            key={f}
-            type="button"
-            className={`m-dot${frame === f ? " m-dot-on" : ""}`}
-            aria-label={f}
-            onClick={() => setFrame(f)}
-          />
-        ))}
-      </div>
+      {frame !== "profile" && (
+        <div className="m-dots" aria-hidden>
+          {(["attendance", "teams"] as const).map((f) => (
+            <button
+              key={f}
+              type="button"
+              className={`m-dot${frame === f ? " m-dot-on" : ""}`}
+              aria-label={f}
+              onClick={() => setFrame(f)}
+            />
+          ))}
+        </div>
+      )}
 
       {frame === "attendance" && (
         <section className="m-pane">
@@ -124,15 +125,12 @@ export function MobilePlayerApp({
             <p className="m-muted">No upcoming game.</p>
           ) : (
             <>
-              <div className="m-game-hero">
-                <p className="m-game-date">{formatDisplayDate(game.date)}</p>
-                <p className="m-game-meta">
-                  {formatDisplayTime(game.startTime)}
-                  {game.endTime ? ` – ${formatDisplayTime(game.endTime)}` : ""}
-                  {game.location ? ` · ${game.location}` : ""}
-                </p>
-                {noGame && <p className="m-nogame">No Game this week</p>}
-              </div>
+              <MobileGameSelector
+                games={session.games}
+                selectedGameId={session.selectedGameId}
+                onSelect={session.selectGame}
+                showNoGameBanner
+              />
 
               {session.myPlayerId && (
                 <div className="m-my-status">
@@ -161,72 +159,17 @@ export function MobilePlayerApp({
                 </div>
               )}
 
-              <div className="m-filters">
-                {(
-                  [
-                    ["all", `All (${filterCounts.all})`],
-                    ["playing", `Playing (${filterCounts.playing})`],
-                    ["maybe", `Maybe (${filterCounts.maybe})`],
-                    ["not", `Not (${filterCounts.not})`],
-                  ] as const
-                ).map(([key, label]) => (
-                  <button
-                    key={key}
-                    type="button"
-                    className={`m-filter${listFilter === key ? " m-filter-on" : ""}`}
-                    onClick={() => setListFilter(key)}
-                  >
-                    {label}
-                  </button>
-                ))}
-              </div>
-
-              <ul className="m-player-list">
-                {visiblePlayers.map((p) => {
-                  const st = session.cellStatus(game.id, p.id);
-                  const canEdit = session.canEditPlayer(p.id) && !locked;
-                  const isMe = p.id === session.myPlayerId;
-                  return (
-                    <li
-                      key={p.id}
-                      className={`m-player-row${isMe ? " m-player-me" : ""}`}
-                    >
-                      <span className="m-avatar" aria-hidden>
-                        {initials(p.displayName)}
-                      </span>
-                      <div className="m-player-main">
-                        <p className="m-player-name">
-                          {p.displayName}
-                          {isMe ? " (you)" : ""}
-                        </p>
-                        {canEdit ? (
-                          <select
-                            className="m-inline-select"
-                            value={st === "no_response" ? "" : st}
-                            disabled={Boolean(session.savingKey)}
-                            onChange={(e) => {
-                              const v = e.target.value as AttendanceStatus;
-                              if (!v) return;
-                              session.changeStatus(game.id, p.id, v);
-                            }}
-                          >
-                            <option value="" disabled>
-                              —
-                            </option>
-                            <option value="playing">Playing</option>
-                            <option value="maybe">Maybe</option>
-                            <option value="not_playing">Not playing</option>
-                          </select>
-                        ) : (
-                          <span className={`m-status-tag m-tag-${st}`}>
-                            {statusLabel(st)}
-                          </span>
-                        )}
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
+              <MobileAttendanceTable
+                game={game}
+                players={session.players}
+                myPlayerId={session.myPlayerId}
+                cellStatus={session.cellStatus}
+                canEditPlayer={session.canEditPlayer}
+                attendanceLocked={locked}
+                savingKey={session.savingKey}
+                onChangeStatus={session.changeStatus}
+                showFilters
+              />
               <p className="m-swipe-hint">Swipe for Teams →</p>
             </>
           )}
@@ -235,17 +178,18 @@ export function MobilePlayerApp({
 
       {frame === "teams" && (
         <section className="m-pane">
-          {!game || !session.teamsView ? (
+          {!session.loaded ? (
+            <p className="m-muted">Loading…</p>
+          ) : !game || !session.teamsView ? (
             <p className="m-muted">No teams yet.</p>
           ) : (
             <>
-              <div className="m-game-hero">
-                <p className="m-game-date">{formatDisplayDate(game.date)}</p>
-                <p className="m-game-meta">
-                  {formatDisplayTime(game.startTime)}
-                  {game.location ? ` · ${game.location}` : ""}
-                </p>
-              </div>
+              <MobileGameSelector
+                games={session.games}
+                selectedGameId={session.selectedGameId}
+                onSelect={session.selectGame}
+                showNoGameBanner
+              />
               <p className="m-muted">{session.teamsView.confirmedLabel}</p>
               {session.teamsView.showTeamLists ? (
                 <div className="m-team-split m-team-split-readonly">
@@ -275,7 +219,7 @@ export function MobilePlayerApp({
               ) : (
                 <p className="m-muted">{session.teamsView.teamsMessage}</p>
               )}
-              <p className="m-swipe-hint">← Attendance · Profile →</p>
+              <p className="m-swipe-hint">← Attendance</p>
             </>
           )}
         </section>
@@ -289,10 +233,6 @@ export function MobilePlayerApp({
           playerId={profile.playerId}
           uid={profile.uid}
           onSaved={refreshProfile}
-          onSignOut={async () => {
-            await signOut();
-            router.replace("/sign-in");
-          }}
         />
       )}
     </div>
@@ -306,7 +246,6 @@ function MobilePlayerProfile(props: {
   playerId: string | null;
   uid: string;
   onSaved: () => Promise<void>;
-  onSignOut: () => Promise<void>;
 }) {
   const [name, setName] = useState(props.displayName);
   const [notif, setNotif] = useState(props.emailNotifications);
@@ -385,13 +324,6 @@ function MobilePlayerProfile(props: {
       {err && <p className="m-error">{err}</p>}
       <button type="button" className="btn btn-primary m-full" onClick={save}>
         Save
-      </button>
-      <button
-        type="button"
-        className="btn m-signout"
-        onClick={() => props.onSignOut()}
-      >
-        Sign Out
       </button>
     </section>
   );

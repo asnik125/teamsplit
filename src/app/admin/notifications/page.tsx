@@ -6,7 +6,7 @@ import { AppNav } from "@/components/AppNav";
 import { PageHeading } from "@/components/PageHeading";
 import { ViewportGate } from "@/components/viewport/ViewportGate";
 import { MobilePlayerApp } from "@/components/mobile/MobilePlayerApp";
-import { MobileChrome } from "@/components/mobile/MobileChrome";
+import { MobileAdminApp } from "@/components/mobile/MobileAdminApp";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
 import { listGames } from "@/lib/firebase/data";
@@ -41,11 +41,14 @@ function RuleEditor({
   description,
   value,
   onChange,
+  scheduleEditable = true,
 }: {
   title: string;
   description: string;
   value: NotificationRuleSettings;
   onChange: (next: NotificationRuleSettings) => void;
+  /** When false, only the enabled toggle is shown (fixed automatic timing). */
+  scheduleEditable?: boolean;
 }) {
   const timeValue = normalizeTimeLocalHHmm(value.timeLocal) ?? value.timeLocal;
   const timeOptions = notificationTimeSelectOptions(timeValue);
@@ -68,46 +71,49 @@ function RuleEditor({
           Enabled
         </label>
       </div>
-      <div className="grid gap-3 sm:grid-cols-2">
-        <div>
-          <label className="label">Days before game</label>
-          <select
-            className="input"
-            value={value.daysBefore}
-            onChange={(e) =>
-              onChange({
-                ...value,
-                daysBefore: Number(e.target.value),
-              })
-            }
-          >
-            <option value={0}>Game day (0)</option>
-            <option value={1}>1 day before</option>
-            <option value={2}>2 days before</option>
-            <option value={3}>3 days before</option>
-          </select>
+      {scheduleEditable && (
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="label">Days before game</label>
+            <select
+              className="input"
+              value={value.daysBefore}
+              onChange={(e) =>
+                onChange({
+                  ...value,
+                  daysBefore: Number(e.target.value),
+                })
+              }
+            >
+              <option value={0}>Game day (0)</option>
+              <option value={1}>1 day before</option>
+              <option value={2}>2 days before</option>
+              <option value={3}>3 days before</option>
+            </select>
+          </div>
+          <div>
+            <label className="label">Time (America/Vancouver)</label>
+            <select
+              className="input"
+              value={timeValue}
+              onChange={(e) =>
+                onChange({
+                  ...value,
+                  timeLocal:
+                    normalizeTimeLocalHHmm(e.target.value) ?? e.target.value,
+                })
+              }
+              aria-label={`Time for ${title}`}
+            >
+              {timeOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
-        <div>
-          <label className="label">Time (America/Vancouver)</label>
-          <select
-            className="input"
-            value={timeValue}
-            onChange={(e) =>
-              onChange({
-                ...value,
-                timeLocal: normalizeTimeLocalHHmm(e.target.value) ?? e.target.value,
-              })
-            }
-            aria-label={`Time for ${title}`}
-          >
-            {timeOptions.map((opt) => (
-              <option key={opt.value} value={opt.value}>
-                {opt.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
+      )}
     </div>
   );
 }
@@ -298,10 +304,11 @@ function NotificationsContent() {
         onChange={(maybeReminder) => setSettings({ ...settings, maybeReminder })}
       />
       <RuleEditor
-        title="Final game status"
-        description="Default: game day at 6:00 PM — Game ON/OFF to everyone (Playing count, Maybe excluded)."
+        title="Game OFF (2h before kickoff)"
+        description="Automatic: exactly 2 hours before kickoff (America/Vancouver). If Playing &lt; minPlayingForTeams, emails Game is OFF once. Maybe and no response do not count. Separate from Game / Maybe reminders. No ON email."
         value={settings.finalStatus}
         onChange={(finalStatus) => setSettings({ ...settings, finalStatus })}
+        scheduleEditable={false}
       />
 
       <div className="flex flex-wrap gap-2">
@@ -457,12 +464,10 @@ export default function AdminNotificationsPage() {
         }
         mobilePlayer={<MobilePlayerApp />}
         mobileAdmin={
-          <div className="m-app">
-            <MobileChrome title="Notifications" />
-            <div className="m-pane m-pane-scroll">
-              <NotificationsContent />
-            </div>
-          </div>
+          <MobileAdminApp
+            initialTab="notifications"
+            notificationsContent={<NotificationsContent />}
+          />
         }
       />
     </RequireAuth>

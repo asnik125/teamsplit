@@ -14,7 +14,7 @@ import {
   sanitizeEmailError,
   sendResendEmail,
 } from "./resend-client";
-import { buildDueSlots } from "./schedule";
+import { buildDueSlots, shouldSendGameOffThreshold } from "./schedule";
 import {
   claimDispatch,
   claimSendSlot,
@@ -102,6 +102,27 @@ export async function processDueNotifications(
       });
     }
 
+    // Automatic Game OFF: evaluate Playing count before claiming so a
+    // sufficient roster does not lock the dispatch (and never sends ON).
+    let attendance: AttendanceRecord[] = [];
+    let playingCount = 0;
+    if (slot.notificationType === "final_status") {
+      const attendanceSnap = await db
+        .collection("attendance")
+        .where("gameId", "==", slot.gameId)
+        .get();
+      attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+      playingCount = countPlaying(attendance);
+      if (
+        !shouldSendGameOffThreshold({
+          playingCount,
+          minPlaying,
+        })
+      ) {
+        continue;
+      }
+    }
+
     const claimed = await claimDispatch({
       gameId: slot.gameId,
       type: slot.notificationType,
@@ -110,14 +131,14 @@ export async function processDueNotifications(
     });
     if (!claimed) continue;
 
-    const attendanceSnap = await db
-      .collection("attendance")
-      .where("gameId", "==", slot.gameId)
-      .get();
-    const attendance = attendanceSnap.docs.map(
-      (d) => d.data() as AttendanceRecord
-    );
-    const playingCount = countPlaying(attendance);
+    if (slot.notificationType !== "final_status") {
+      const attendanceSnap = await db
+        .collection("attendance")
+        .where("gameId", "==", slot.gameId)
+        .get();
+      attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+      playingCount = countPlaying(attendance);
+    }
 
     const { recipients, skipped } = resolveRecipients({
       type: slot.notificationType,
@@ -134,10 +155,7 @@ export async function processDueNotifications(
     let detail: string | null = null;
 
     if (slot.notificationType === "final_status") {
-      detail =
-        playingCount >= minPlaying
-          ? `Game is ON (${playingCount} Playing)`
-          : `Game is OFF (${playingCount} Playing, need ${minPlaying})`;
+      detail = `Game is OFF (${playingCount} Playing, need ${minPlaying})`;
     }
 
     const baseContent = buildEmailForType({

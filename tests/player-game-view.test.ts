@@ -29,6 +29,8 @@ describe("buildPlayerGameView", () => {
     const v = buildPlayerGameView({
       myStatus: "playing",
       myPlayerId: "p1",
+      playingCount: 7,
+      maybeCount: 0,
       includedCount: 7,
       currentTeams: teams(),
       isUpdating: true,
@@ -42,10 +44,27 @@ describe("buildPlayerGameView", () => {
     const v = buildPlayerGameView({
       myStatus: "playing",
       myPlayerId: "p1",
+      playingCount: 5,
+      maybeCount: 1,
       includedCount: 6,
       currentTeams: teams(),
     });
     expect(v.teamsMessage).toBe("Teams ready");
     expect(v.showTeamLists).toBe(true);
+    expect(v.confirmedLabel).toBe("5 confirmed + 1 maybe");
+  });
+
+  it("ready with only playing omits maybe and never shows / minPlaying", () => {
+    const v = buildPlayerGameView({
+      myStatus: "playing",
+      myPlayerId: "p1",
+      playingCount: 10,
+      maybeCount: 0,
+      includedCount: 10,
+      currentTeams: teams(),
+      minPlaying: 6,
+    });
+    expect(v.confirmedLabel).toBe("10 players confirmed");
+    expect(v.confirmedLabel.includes("/")).toBe(false);
   });
 });

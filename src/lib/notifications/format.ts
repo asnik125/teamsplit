@@ -9,10 +9,7 @@ export function formatRunSummary(run: {
   detail: string | null;
 }): string {
   const label = notificationTypeLabel(run.type);
-  if (run.type === "final_status" && run.detail?.includes("ON")) {
-    return `${run.gameDate} — Game ON — Sent to ${run.successCount}`;
-  }
-  if (run.type === "final_status" && run.detail?.includes("OFF")) {
+  if (run.type === "final_status") {
     return `${run.gameDate} — Game OFF — Sent to ${run.successCount}`;
   }
   if (run.recipientCount === 0) {

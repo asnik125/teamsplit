@@ -225,6 +225,6 @@ export interface NotificationRunLog {
   successCount: number;
   failureCount: number;
   skippedCount: number;
-  /** e.g. Game is ON / Game is OFF */
+  /** e.g. Game is OFF (5 Playing, need 6) */
   detail: string | null;
 }

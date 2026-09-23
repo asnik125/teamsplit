@@ -126,7 +126,9 @@ export default function ProfilePage() {
           </div>
         }
         mobilePlayer={<MobilePlayerApp initialFrame="profile" />}
-        mobileAdmin={<MobileAdminApp initialTab="settings" />}
+        mobileAdmin={
+          <MobileAdminApp initialTab="profile" profileContent={<ProfileForm />} />
+        }
       />
     </RequireAuth>
   );

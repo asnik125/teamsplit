@@ -346,6 +346,10 @@ export function PlayerGameBoard() {
   const includedCount = teamsGameId
     ? countIncluded(teamsGameId, includeMaybe)
     : 0;
+  const playingCount = teamsGameId ? countIncluded(teamsGameId, false) : 0;
+  const maybeCount = teamsGameId
+    ? players.filter((p) => cellStatus(teamsGameId, p.id) === "maybe").length
+    : 0;
 
   const myStatus =
     teamsGameId && myPlayerId
@@ -356,6 +360,8 @@ export function PlayerGameBoard() {
     ? buildPlayerGameView({
         myStatus,
         myPlayerId,
+        playingCount,
+        maybeCount,
         includedCount,
         currentTeams: teams,
         minPlaying,

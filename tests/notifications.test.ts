@@ -9,15 +9,23 @@ import {
 } from "@/lib/notifications/timezone";
 import {
   buildDueSlots,
+  computeGameOffThresholdDueAt,
   computeNotificationDueAt,
+  dueAtForNotificationType,
   isNotificationDue,
+  shouldSendGameOffThreshold,
 } from "@/lib/notifications/schedule";
-import { defaultNotificationSettings } from "@/lib/notifications/defaults";
+import { defaultNotificationSettings, sendRecordId } from "@/lib/notifications/defaults";
 import {
   countPlaying,
   resolveRecipients,
 } from "@/lib/notifications/recipients";
 import { buildFinalStatusEmail } from "@/lib/notifications/templates";
+import {
+  dispatchAllowsClaim,
+  dispatchDocId,
+  sendRecordBlocksResend,
+} from "@/lib/notifications/store";
 import type {
   AttendanceRecord,
   Game,
@@ -82,15 +90,20 @@ describe("Vancouver timezone scheduling", () => {
     expect(due.toISOString()).toBe("2026-09-24T02:00:00.000Z");
   });
 
-  it("game-day Maybe/final use game.date", () => {
+  it("game-day Maybe uses game.date; Game OFF uses start − 2h", () => {
     const g = game({ id: "g1", date: "2026-09-24", startTime: "19:30" });
     const settings = defaultNotificationSettings();
     const maybeDue = computeNotificationDueAt(g, settings.maybeReminder);
-    const finalDue = computeNotificationDueAt(g, settings.finalStatus);
     expect(zonedCalendarDate(maybeDue)).toBe("2026-09-24");
-    expect(zonedCalendarDate(finalDue)).toBe("2026-09-24");
     expect(maybeDue.toISOString()).toBe("2026-09-24T23:00:00.000Z"); // 16:00 PDT
-    expect(finalDue.toISOString()).toBe("2026-09-25T01:00:00.000Z"); // 18:00 PDT
+
+    const offDue = dueAtForNotificationType(
+      g,
+      "final_status",
+      settings.finalStatus
+    );
+    // Sep 24 19:30 PDT − 2h = Sep 24 17:30 PDT = Sep 25 00:30 UTC
+    expect(offDue.toISOString()).toBe("2026-09-25T00:30:00.000Z");
   });
 
   it("respects custom Admin time", () => {
@@ -194,6 +207,38 @@ describe("recipients", () => {
     expect(skipped.some((s) => s.reason === "missing_email")).toBe(true);
   });
 
+  it("Admin role does not exclude; unset emailNotifications defaults ON", () => {
+    const adminOn = user("admin1", {
+      playerId: "p1",
+      role: "admin",
+      emailNotifications: true,
+    });
+    const adminLegacy = user("admin2", {
+      playerId: "p_admin2",
+      role: "admin",
+    });
+    delete (adminLegacy as { emailNotifications?: boolean }).emailNotifications;
+    const adminOptOut = user("admin_out", {
+      playerId: "p_out",
+      role: "admin",
+      emailNotifications: false,
+    });
+
+    const { recipients, skipped } = resolveRecipients({
+      type: "game_reminder",
+      users: [adminOn, adminLegacy, adminOptOut],
+      players,
+      attendance: [],
+    });
+    expect(recipients.map((r) => r.userId).sort()).toEqual([
+      "admin1",
+      "admin2",
+    ]);
+    expect(skipped.find((s) => s.userId === "admin_out")?.reason).toBe(
+      "emailNotifications_off"
+    );
+  });
+
   it("Maybe only includes Maybe attendance", () => {
     const users = [
       user("u1", { playerId: "p1" }),
@@ -225,8 +270,247 @@ describe("recipients", () => {
   });
 });
 
+describe("automatic Game OFF (final_status)", () => {
+  function mkAttendance(
+    nPlaying: number,
+    nMaybe = 0,
+    nNoResponse = 0
+  ): AttendanceRecord[] {
+    const rows: AttendanceRecord[] = [];
+    for (let i = 0; i < nPlaying; i++) {
+      rows.push({
+        gameId: "g",
+        playerId: `p${i}`,
+        status: "playing",
+        updatedAt: "",
+        updatedBy: null,
+      });
+    }
+    for (let i = 0; i < nMaybe; i++) {
+      rows.push({
+        gameId: "g",
+        playerId: `m${i}`,
+        status: "maybe",
+        updatedAt: "",
+        updatedBy: null,
+      });
+    }
+    for (let i = 0; i < nNoResponse; i++) {
+      rows.push({
+        gameId: "g",
+        playerId: `n${i}`,
+        status: "no_response",
+        updatedAt: "",
+        updatedBy: null,
+      });
+    }
+    return rows;
+  }
+
+  it("dueAt is exactly game start − 2 hours in America/Vancouver (PDT)", () => {
+    const g = game({ id: "g1", date: "2026-09-24", startTime: "19:30" });
+    const due = computeGameOffThresholdDueAt(g);
+    // Kickoff 19:30 PDT = 02:30 UTC next day; check 17:30 PDT = 00:30 UTC
+    expect(due.toISOString()).toBe("2026-09-25T00:30:00.000Z");
+    expect(
+      dueAtForNotificationType(
+        g,
+        "final_status",
+        defaultNotificationSettings().finalStatus
+      ).toISOString()
+    ).toBe(due.toISOString());
+  });
+
+  it("dueAt respects PST (winter) DST offset", () => {
+    const g = game({ id: "g1", date: "2026-01-15", startTime: "19:30" });
+    const due = computeGameOffThresholdDueAt(g);
+    // Kickoff 19:30 PST = 03:30 UTC next day; check 17:30 PST = 01:30 UTC
+    expect(due.toISOString()).toBe("2026-01-16T01:30:00.000Z");
+  });
+
+  it("5 Playing → OFF should send; 6 Playing → no OFF", () => {
+    expect(
+      shouldSendGameOffThreshold({ playingCount: 5, minPlaying: 6 })
+    ).toBe(true);
+    expect(
+      shouldSendGameOffThreshold({ playingCount: 6, minPlaying: 6 })
+    ).toBe(false);
+    expect(
+      shouldSendGameOffThreshold({ playingCount: 7, minPlaying: 6 })
+    ).toBe(false);
+  });
+
+  it("Maybe and no_response do not count toward minimum", () => {
+    expect(countPlaying(mkAttendance(5, 10, 10))).toBe(5);
+    expect(
+      shouldSendGameOffThreshold({
+        playingCount: countPlaying(mkAttendance(5, 10, 10)),
+        minPlaying: 6,
+      })
+    ).toBe(true);
+    expect(
+      shouldSendGameOffThreshold({
+        playingCount: countPlaying(mkAttendance(6, 0, 0)),
+        minPlaying: 6,
+      })
+    ).toBe(false);
+  });
+
+  it("OFF email subject and body include date, count, minimum, and reason", () => {
+    const g = game({ id: "g", date: "2026-09-24", startTime: "19:30" });
+    const email = buildFinalStatusEmail({
+      game: g,
+      playingCount: 5,
+      minPlaying: 6,
+      appUrl: "http://localhost:3000",
+    });
+    expect(email.subject).toBe("TeamSplit — Game is OFF");
+    expect(email.text).toContain("Game is OFF — not enough confirmed players.");
+    expect(email.text).toContain("5 confirmed Playing (minimum required: 6)");
+    expect(email.text).toMatch(/Sep|September|2026-09-24|09\/24/i);
+    expect(email.text).toMatch(/7:30|19:30/i);
+  });
+
+  it("Admin+Player is included when email notifications opted in", () => {
+    const players: Player[] = [
+      {
+        id: "p1",
+        displayName: "Admin Player",
+        email: null,
+        active: true,
+        linkedUid: "admin1",
+        createdAt: "",
+        updatedAt: "",
+      },
+    ];
+    const users = [
+      user("admin1", {
+        playerId: "p1",
+        role: "admin",
+        emailNotifications: true,
+        email: "admin@example.com",
+      }),
+    ];
+    const { recipients } = resolveRecipients({
+      type: "final_status",
+      users,
+      players,
+      attendance: [],
+    });
+    expect(recipients.map((r) => r.userId)).toEqual(["admin1"]);
+  });
+
+  it("explicit email opt-out is respected for Game OFF", () => {
+    const players: Player[] = [
+      {
+        id: "p1",
+        displayName: "A",
+        email: null,
+        active: true,
+        linkedUid: "u1",
+        createdAt: "",
+        updatedAt: "",
+      },
+    ];
+    const users = [
+      user("u1", {
+        playerId: "p1",
+        emailNotifications: false,
+        email: "a@example.com",
+      }),
+    ];
+    const { recipients, skipped } = resolveRecipients({
+      type: "final_status",
+      users,
+      players,
+      attendance: [],
+    });
+    expect(recipients).toHaveLength(0);
+    expect(skipped.some((s) => s.reason === "emailNotifications_off")).toBe(
+      true
+    );
+  });
+
+  it("No Game dates do not trigger Game OFF slot", () => {
+    const settings = defaultNotificationSettings();
+    const games = [
+      game({
+        id: "g1",
+        date: "2026-09-24",
+        startTime: "19:30",
+        noGame: true,
+      }),
+    ];
+    const now = vancouverLocalToUtc("2026-09-24", "17:35");
+    const slots = buildDueSlots({
+      games,
+      settings,
+      now,
+      onlyType: "final_status",
+    });
+    expect(slots).toHaveLength(0);
+    expect(
+      isNotificationDue({
+        dueAt: computeGameOffThresholdDueAt(games[0]),
+        now,
+        game: games[0],
+      })
+    ).toBe(false);
+  });
+
+  it("buildDueSlots includes final_status at start − 2h, not at old 18:00 clock", () => {
+    const settings = {
+      ...defaultNotificationSettings(),
+      gameReminder: { enabled: false, daysBefore: 1, timeLocal: "19:00" },
+      maybeReminder: { enabled: false, daysBefore: 0, timeLocal: "16:00" },
+    };
+    const g = game({ id: "g1", date: "2026-09-24", startTime: "19:30" });
+    // At 17:35 Vancouver — past 17:30 check, before kickoff
+    const atCheck = buildDueSlots({
+      games: [g],
+      settings,
+      now: vancouverLocalToUtc("2026-09-24", "17:35"),
+      onlyType: "final_status",
+    });
+    expect(atCheck).toHaveLength(1);
+    expect(atCheck[0].dueAt.toISOString()).toBe("2026-09-25T00:30:00.000Z");
+
+    // At old final 18:00 local — still due (within lookback until start)
+    const atOldFinal = buildDueSlots({
+      games: [g],
+      settings,
+      now: vancouverLocalToUtc("2026-09-24", "18:00"),
+      onlyType: "final_status",
+    });
+    expect(atOldFinal).toHaveLength(1);
+
+    // Before check window
+    const tooEarly = buildDueSlots({
+      games: [g],
+      settings,
+      now: vancouverLocalToUtc("2026-09-24", "17:00"),
+      onlyType: "final_status",
+    });
+    expect(tooEarly).toHaveLength(0);
+  });
+
+  it("duplicate cron calls do not resend (same final_status dedupe keys)", () => {
+    const dispatchId = dispatchDocId("g1", "final_status");
+    expect(dispatchId).toBe("g1_final_status");
+    expect(dispatchAllowsClaim({ status: "completed", hasFailures: false })).toBe(
+      false
+    );
+    expect(dispatchAllowsClaim(null)).toBe(true);
+
+    const sendId = sendRecordId("g1", "final_status", "u1");
+    expect(sendId).toBe("g1_final_status_u1");
+    expect(sendRecordBlocksResend({ status: "sent" })).toBe(true);
+    expect(sendRecordBlocksResend(null)).toBe(false);
+  });
+});
+
 describe("final status Playing count", () => {
-  it("Maybe does not count; 5 OFF, 6/7 ON", () => {
+  it("Maybe does not count; 5 OFF, 6/7 would be ON template only", () => {
     const mk = (nPlaying: number, nMaybe = 2): AttendanceRecord[] => {
       const rows: AttendanceRecord[] = [];
       for (let i = 0; i < nPlaying; i++) {

@@ -4,7 +4,7 @@ import type {
   TeamMemberPublic,
 } from "./types";
 import {
-  confirmedProgressLabel,
+  confirmedAttendanceLabel,
   DEFAULT_MIN_PLAYING_FOR_TEAMS,
   insufficientMessage,
 } from "./team-sync";
@@ -15,6 +15,7 @@ export interface PlayerGameViewModel {
   statusLabel: string;
   statusKind: AttendanceStatus;
   playingCount: number;
+  maybeCount: number;
   includedCount: number;
   minPlaying: number;
   confirmedLabel: string;
@@ -48,6 +49,11 @@ function findMyTeam(
 export function buildPlayerGameView(input: {
   myStatus: AttendanceStatus;
   myPlayerId: string | null | undefined;
+  /** Playing attendance count (display). */
+  playingCount: number;
+  /** Maybe attendance count (display). */
+  maybeCount: number;
+  /** Count included in team generation (Playing, + Maybe if toggled). */
   includedCount: number;
   currentTeams: GameTeams | null;
   minPlaying?: number;
@@ -61,16 +67,27 @@ export function buildPlayerGameView(input: {
   const includeMaybePlayers = Boolean(
     input.includeMaybePlayers ?? input.currentTeams?.includeMaybePlayers
   );
-  const { myStatus, myPlayerId, includedCount, currentTeams, isUpdating } =
-    input;
+  const {
+    myStatus,
+    myPlayerId,
+    playingCount,
+    maybeCount,
+    includedCount,
+    currentTeams,
+    isUpdating,
+  } = input;
 
-  const confirmedLabel = confirmedProgressLabel(includedCount, minPlaying);
+  const confirmedLabel = confirmedAttendanceLabel({
+    playingCount,
+    maybeCount,
+  });
 
   if (isUpdating) {
     return {
       statusLabel: statusLabel(myStatus),
       statusKind: myStatus,
-      playingCount: includedCount,
+      playingCount,
+      maybeCount,
       includedCount,
       minPlaying,
       confirmedLabel,
@@ -89,7 +106,8 @@ export function buildPlayerGameView(input: {
     return {
       statusLabel: statusLabel(myStatus),
       statusKind: myStatus,
-      playingCount: includedCount,
+      playingCount,
+      maybeCount,
       includedCount,
       minPlaying,
       confirmedLabel,
@@ -112,7 +130,8 @@ export function buildPlayerGameView(input: {
     return {
       statusLabel: statusLabel(myStatus),
       statusKind: myStatus,
-      playingCount: includedCount,
+      playingCount,
+      maybeCount,
       includedCount,
       minPlaying,
       confirmedLabel,
@@ -136,7 +155,8 @@ export function buildPlayerGameView(input: {
   return {
     statusLabel: statusLabel(myStatus),
     statusKind: myStatus,
-    playingCount: includedCount,
+    playingCount,
+    maybeCount,
     includedCount,
     minPlaying,
     confirmedLabel,

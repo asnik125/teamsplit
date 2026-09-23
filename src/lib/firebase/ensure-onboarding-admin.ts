@@ -73,6 +73,18 @@ export async function ensureRegisteredPlayerOnboarding(input: {
 
   if (userSnap.exists) {
     profile = { ...(userSnap.data() as UserProfile), uid };
+    // Legacy profiles missing the field default to ON (explicit false stays opted out).
+    if (profile.emailNotifications === undefined) {
+      profile = {
+        ...profile,
+        emailNotifications: true,
+        updatedAt: now,
+      };
+      await userRef.set(
+        { emailNotifications: true, updatedAt: now },
+        { merge: true }
+      );
+    }
   } else {
     const plan = planSelfRegistration({
       uid,

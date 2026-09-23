@@ -104,27 +104,48 @@ export function buildFinalStatusEmail(input: {
   const { game, playingCount, appUrl } = input;
   const isOn = playingCount >= minPlaying;
   const when = `${formatDisplayDate(game.date)} · ${formatDisplayTime(game.startTime)}`;
-  const subject = isOn
-    ? "TeamSplit — Game is ON"
-    : "TeamSplit — Game is OFF";
-  const headline = isOn ? "Game is ON" : "Game is OFF";
-  const countLine = isOn
-    ? `${playingCount} players confirmed Playing.`
-    : `${playingCount} players confirmed Playing (need ${minPlaying}).`;
+  if (isOn) {
+    // Kept for template completeness; automatic final_status rule does not send ON.
+    const subject = "TeamSplit — Game is ON";
+    const countLine = `${playingCount} players confirmed Playing.`;
+    const text = [
+      "TeamSplit",
+      "",
+      "Game is ON",
+      countLine,
+      when,
+      `Location: ${game.location}`,
+      "",
+      openLink(appUrl),
+    ].join("\n");
+    const html = wrapHtml(
+      `<p><strong>Game is ON</strong></p>
+       <p>${escapeHtml(countLine)}</p>
+       <p>${when}<br/>Location: ${escapeHtml(game.location)}</p>`,
+      appUrl
+    );
+    return { subject, text, html };
+  }
+
+  const subject = "TeamSplit — Game is OFF";
+  const countLine = `${playingCount} confirmed Playing (minimum required: ${minPlaying}).`;
+  const reason = "Game is OFF — not enough confirmed players.";
   const text = [
     "TeamSplit",
     "",
-    headline,
-    countLine,
+    "Game is OFF",
+    reason,
     when,
     `Location: ${game.location}`,
+    countLine,
     "",
     openLink(appUrl),
   ].join("\n");
   const html = wrapHtml(
-    `<p><strong>${headline}</strong></p>
-     <p>${escapeHtml(countLine)}</p>
-     <p>${when}<br/>Location: ${escapeHtml(game.location)}</p>`,
+    `<p><strong>Game is OFF</strong></p>
+     <p>${escapeHtml(reason)}</p>
+     <p>${when}<br/>Location: ${escapeHtml(game.location)}</p>
+     <p>${escapeHtml(countLine)}</p>`,
     appUrl
   );
   return { subject, text, html };

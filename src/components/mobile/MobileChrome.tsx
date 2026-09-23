@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import Link from "next/link";
 import { useAuth, type AppViewMode } from "@/lib/firebase/auth-context";
 
 export function MobileChrome({
@@ -23,7 +24,9 @@ export function MobileChrome({
     <header className="m-chrome">
       <div className="m-chrome-row">
         <div className="m-chrome-brand">
-          <span className="m-chrome-logo">TeamSplit</span>
+          <Link href="/" className="m-chrome-logo">
+            TeamSplit
+          </Link>
           {title ? <span className="m-chrome-title">{title}</span> : null}
         </div>
         {isAdmin && (

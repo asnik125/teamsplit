@@ -21,7 +21,8 @@ export function defaultNotificationRule(
   };
 }
 
-/** Defaults: day-before 19:00, game-day 16:00 (Maybe), game-day 18:00 (final). */
+/** Defaults: day-before 19:00, game-day 16:00 (Maybe).
+ * finalStatus clock fields are unused — timing is game start − 2h. */
 export function defaultNotificationSettings(
   updatedBy: string | null = null
 ): NotificationSettings {
@@ -53,7 +54,7 @@ export const ALL_NOTIFICATION_TYPES: NotificationType[] = [
 export function notificationTypeLabel(type: NotificationType): string {
   if (type === "game_reminder") return "Game reminder";
   if (type === "maybe_reminder") return "Maybe reminder";
-  return "Final game status";
+  return "Game OFF (2h before kickoff)";
 }
 
 export function sendRecordId(

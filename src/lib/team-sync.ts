@@ -18,11 +18,33 @@ export function insufficientMessage(_minPlaying: number): string {
   return "Not enough players yet.";
 }
 
+/**
+ * Attendance summary for the Teams panel.
+ * - Does NOT show "/ minPlaying" — that threshold is only for team generation.
+ * - "confirmed" = Playing; optionally append Maybe count when present.
+ */
+export function confirmedAttendanceLabel(input: {
+  playingCount: number;
+  maybeCount: number;
+}): string {
+  const playing = Math.max(0, Math.floor(input.playingCount));
+  const maybe = Math.max(0, Math.floor(input.maybeCount));
+  if (maybe > 0) {
+    return `${playing} confirmed + ${maybe} maybe`;
+  }
+  if (playing === 1) return "1 player confirmed";
+  return `${playing} players confirmed`;
+}
+
+/** @deprecated Use confirmedAttendanceLabel — kept for call-site migration. */
 export function confirmedProgressLabel(
   includedCount: number,
-  minPlaying: number
+  _minPlaying: number
 ): string {
-  return `${includedCount} / ${minPlaying} players confirmed`;
+  return confirmedAttendanceLabel({
+    playingCount: includedCount,
+    maybeCount: 0,
+  });
 }
 
 export function isIncludedForTeams(
