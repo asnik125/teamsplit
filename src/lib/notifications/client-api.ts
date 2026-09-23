@@ -65,3 +65,27 @@ export async function simulateNotification(
   if (!res.ok) throw new Error(data.error || "Simulate failed");
   return data;
 }
+
+/** Admin testing: clear operational dedupe for one game + type (keeps notificationRuns). */
+export async function resetNotificationDispatch(
+  user: User,
+  gameId: string,
+  type: NotificationType
+): Promise<{
+  deletedDispatch: boolean;
+  deletedSendCount: number;
+  message: string;
+}> {
+  const res = await fetch("/api/admin/notifications/reset-dispatch", {
+    method: "POST",
+    headers: await authHeaders(user),
+    body: JSON.stringify({ gameId, type, confirm: true }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Reset dispatch failed");
+  return {
+    deletedDispatch: Boolean(data.deletedDispatch),
+    deletedSendCount: Number(data.deletedSendCount) || 0,
+    message: String(data.message || "Reset complete"),
+  };
+}

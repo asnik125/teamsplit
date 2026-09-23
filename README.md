@@ -133,7 +133,7 @@ Firebase is the single source of truth. No Google Sheets integration.
 
 ## Email notifications (MVP)
 
-Uses **Resend** + **Vercel Cron** (no Firebase Functions).
+Uses **Resend** + a **scheduled HTTP call** to `/api/cron/notifications` (no Firebase Functions).
 
 | Rule | Default | Recipients |
 | --- | --- | --- |
@@ -141,7 +141,24 @@ Uses **Resend** + **Vercel Cron** (no Firebase Functions).
 | Maybe reminder | Game day 4:00 PM | Maybe only |
 | Final status | Game day 6:00 PM | Everyone — Game ON if ≥6 Playing, else OFF |
 
-Configure under **Admin → Notifications**. Cron: `GET/POST /api/cron/notifications` (requires `CRON_SECRET`).
+Configure under **Admin → Notifications**.  
+**“Days before” = calendar day** in America/Vancouver (not “24 hours before kickoff”).
+
+### Production cron (required)
+
+Vercel **Hobby** does not support `*/5` crons, so TeamSplit does **not** ship `vercel.json` crons. You must poll the endpoint yourself:
+
+1. Set `CRON_SECRET` in Vercel (same random string as local).
+2. Create a job at [cron-job.org](https://cron-job.org) (or any uptime/cron service):
+   - URL: `https://<your-domain>/api/cron/notifications`
+   - Method: `GET` or `POST`
+   - Schedule: every **5 minutes**
+   - Header: `Authorization: Bearer <CRON_SECRET>`
+3. After the first successful run, due reminders (within a 2-hour lookback) will send via Resend.
+
+Without this job, **Test Email** still works; **scheduled** reminders do not.
+
+On **Vercel Pro**, you may instead restore a `vercel.json` cron for `/api/cron/notifications` every 5 minutes.
 
 ### Local testing
 
@@ -150,12 +167,12 @@ Configure under **Admin → Notifications**. Cron: `GET/POST /api/cron/notificat
 3. Dev **Simulate** buttons force each of the 3 types for a selected game (no clock wait).
 4. Or: `curl -H "Authorization: Bearer $CRON_SECRET" http://localhost:3000/api/cron/notifications`
 
-### Production still required (not done in this task)
+### Production still required (checklist)
 
 1. Resend + verify domain DNS (SPF, DKIM) for `teamsplit.vanaku.com`.
 2. `EMAIL_FROM=TeamSplit <notifications@teamsplit.vanaku.com>`
 3. Vercel env: Resend, Cron secret, app URL, Firebase Admin credentials.
-4. Deploy `vercel.json` cron (`*/5 * * * *`).
+4. External cron every 5 minutes (see above).
 5. Redeploy Firestore rules.
 
 ## Security rules

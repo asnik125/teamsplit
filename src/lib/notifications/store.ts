@@ -235,3 +235,88 @@ export async function markSendFailed(input: {
       { merge: true }
     );
 }
+
+/**
+ * Admin testing reset / Simulate forceRedispatch:
+ * Clears operational dedupe for exactly one game + notification type.
+ * - Deletes notificationDispatches/{gameId}_{type}
+ * - Deletes notificationSends matching that gameId + type
+ * Does NOT touch notificationRuns (audit trail) or other games/types.
+ */
+export async function resetNotificationDedupeState(input: {
+  gameId: string;
+  type: NotificationType;
+}): Promise<{ deletedDispatch: boolean; deletedSendCount: number }> {
+  const db = getAdminDb();
+  const dispatchRef = db
+    .collection("notificationDispatches")
+    .doc(dispatchDocId(input.gameId, input.type));
+  const [sendsSnap, dispatchSnap] = await Promise.all([
+    db
+      .collection("notificationSends")
+      .where("gameId", "==", input.gameId)
+      .where("notificationType", "==", input.type)
+      .get(),
+    dispatchRef.get(),
+  ]);
+
+  if (sendsSnap.empty && !dispatchSnap.exists) {
+    return { deletedDispatch: false, deletedSendCount: 0 };
+  }
+
+  const batch = db.batch();
+  for (const doc of sendsSnap.docs) {
+    batch.delete(doc.ref);
+  }
+  if (dispatchSnap.exists) {
+    batch.delete(dispatchRef);
+  }
+  await batch.commit();
+  return {
+    deletedDispatch: dispatchSnap.exists,
+    deletedSendCount: sendsSnap.size,
+  };
+}
+
+/** Pure description of what a targeted reset affects (for tests / UI copy). */
+export function notificationDedupeResetTargets(
+  gameId: string,
+  type: NotificationType
+): {
+  dispatchDocId: string;
+  sendsFilter: { gameId: string; notificationType: NotificationType };
+  preserveCollections: readonly string[];
+} {
+  return {
+    dispatchDocId: dispatchDocId(gameId, type),
+    sendsFilter: { gameId, notificationType: type },
+    preserveCollections: ["notificationRuns"] as const,
+  };
+}
+
+export function canAdminResetNotificationDedupe(role: string | null | undefined): boolean {
+  return role === "admin";
+}
+
+/**
+ * Mirror of claimDispatch gate — used in tests to prove reset unlocks re-entry.
+ * Production claimDispatch is unchanged.
+ */
+export function dispatchAllowsClaim(doc: {
+  status?: string;
+  hasFailures?: boolean;
+} | null): boolean {
+  if (!doc) return true;
+  if (doc.status === "completed" && !doc.hasFailures) return false;
+  return true;
+}
+
+/**
+ * Mirror of claimSendSlot "already_sent" gate for tests.
+ */
+export function sendRecordBlocksResend(doc: {
+  status?: string;
+} | null): boolean {
+  if (!doc) return false;
+  return doc.status === "sent";
+}

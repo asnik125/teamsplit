@@ -22,6 +22,7 @@ import {
   loadNotificationSettings,
   markSendFailed,
   markSendSent,
+  resetNotificationDedupeState,
 } from "./store";
 import { buildEmailForType } from "./templates";
 
@@ -95,7 +96,10 @@ export async function processDueNotifications(
     const nowIso = now.toISOString();
 
     if (options.forceRedispatch) {
-      await clearSendRecordsForSlot(slot.gameId, slot.notificationType);
+      await resetNotificationDedupeState({
+        gameId: slot.gameId,
+        type: slot.notificationType,
+      });
     }
 
     const claimed = await claimDispatch({
@@ -239,27 +243,6 @@ export async function processDueNotifications(
   }
 
   return { slotsProcessed: slots.length, runs };
-}
-
-async function clearSendRecordsForSlot(
-  gameId: string,
-  type: NotificationType
-): Promise<void> {
-  const db = getAdminDb();
-  const snap = await db
-    .collection("notificationSends")
-    .where("gameId", "==", gameId)
-    .where("notificationType", "==", type)
-    .get();
-  const batch = db.batch();
-  for (const doc of snap.docs) {
-    batch.delete(doc.ref);
-  }
-  const dispatchRef = db
-    .collection("notificationDispatches")
-    .doc(`${gameId}_${type}`);
-  batch.delete(dispatchRef);
-  await batch.commit();
 }
 
 async function writeRunLog(input: {
