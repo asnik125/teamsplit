@@ -1,8 +1,5 @@
-import {
-  assertValidTeamSplit,
-  generateSnakeDraftTeams,
-  toPublicMembers,
-} from "./balancer";
+import { assertValidTeamSplit } from "./balancer";
+import { computeBestBalancedSplit } from "./team-generate";
 import type {
   AttendanceStatus,
   RatedPlayer,
@@ -87,8 +84,9 @@ export interface TeamsSyncDecision {
 }
 
 /**
- * Every attendance / include-maybe change fully recalculates teams.
- * Attendance always wins over prior manual arrangements.
+ * Pure helper: single best skill-balanced split for a rated pool.
+ * Production attendance sync does NOT call this — it only marks stale.
+ * Explicit Admin Generate uses generateTeamsExplicit → computeBestBalancedSplit.
  */
 export function decideTeamsSync(input: {
   includedRated: RatedPlayer[];
@@ -124,20 +122,10 @@ export function decideTeamsSync(input: {
     };
   }
 
-  const { teamA, teamB } = generateSnakeDraftTeams(input.includedRated);
-  assertValidTeamSplit(
-    input.includedRated.map((p) => p.id),
-    teamA,
-    teamB
-  );
-
-  const markMaybe = (members: TeamMemberPublic[]): TeamMemberPublic[] =>
-    members.map((m) =>
-      maybeIds.has(m.playerId) ? { ...m, maybe: true } : { ...m, maybe: false }
-    );
-
-  const publicA = markMaybe(toPublicMembers(teamA));
-  const publicB = markMaybe(toPublicMembers(teamB));
+  const { teamA: publicA, teamB: publicB } = computeBestBalancedSplit({
+    rated: input.includedRated,
+    maybePlayerIds: maybeIds,
+  });
   assertValidTeamSplit(
     input.includedRated.map((p) => p.id),
     publicA,

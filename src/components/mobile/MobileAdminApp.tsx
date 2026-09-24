@@ -237,13 +237,33 @@ function MobileAdminTeamBuilder() {
                   <input
                     type="checkbox"
                     checked={session.includeMaybe}
-                    disabled={Boolean(session.teamsView?.showProgress)}
+                    disabled={Boolean(session.updatingTeams)}
                     onChange={(e) =>
                       session.toggleIncludeMaybe(e.target.checked)
                     }
                   />
                 </label>
               )}
+              {session.showAdminUI ? (
+                <div className="m-teams-actions">
+                  <button
+                    type="button"
+                    className="btn btn-primary m-full"
+                    disabled={
+                      session.updatingTeams ||
+                      session.teamsView?.teamsPhase === "insufficient"
+                    }
+                    onClick={() => session.generateTeams()}
+                  >
+                    {session.updatingTeams ? "Working…" : "Generate Teams"}
+                  </button>
+                </div>
+              ) : null}
+              {session.teamsView?.teamsPhase === "stale" ? (
+                <p className="m-error">{session.teamsView.teamsMessage}</p>
+              ) : session.teamsView?.teamsMessage ? (
+                <p className="m-muted">{session.teamsView.teamsMessage}</p>
+              ) : null}
               {session.teamsView?.showTeamLists ? (
                 <MobileTouchTeamColumns
                   teamA={session.teamsView.teamA}
@@ -252,9 +272,7 @@ function MobileAdminTeamBuilder() {
                   dragActiveRef={dragActiveRef}
                   onChange={(a, b) => session.persistManualTeams(a, b)}
                 />
-              ) : (
-                <p className="m-muted">{session.teamsView?.teamsMessage}</p>
-              )}
+              ) : null}
               <p className="m-swipe-hint">Swipe for Participants →</p>
             </>
           ) : (

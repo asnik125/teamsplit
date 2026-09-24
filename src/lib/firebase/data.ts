@@ -245,6 +245,8 @@ export async function getGameTeams(
     teamB: sanitizeTeamMembers(data.teamB),
     manuallyAdjusted: Boolean(data.manuallyAdjusted),
     includeMaybePlayers: Boolean(data.includeMaybePlayers),
+    stale: Boolean(data.stale),
+    eligibleFingerprint: data.eligibleFingerprint ?? null,
   };
 }
 

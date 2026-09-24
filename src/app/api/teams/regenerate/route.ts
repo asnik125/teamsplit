@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { regenerateTeamsFromAttendance } from "@/lib/firebase/sync-teams-admin";
+import { generateTeamsExplicit } from "@/lib/firebase/sync-teams-admin";
 import type { UserProfile } from "@/lib/types";
 
 async function requireAdmin(req: NextRequest) {
@@ -25,6 +25,7 @@ async function requireAdmin(req: NextRequest) {
   }
 }
 
+/** Admin-only explicit Generate Teams (single best skill-balanced split). */
 export async function POST(req: NextRequest) {
   const auth = await requireAdmin(req);
   if ("error" in auth && auth.error) return auth.error;
@@ -44,18 +45,26 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const decision = await regenerateTeamsFromAttendance({
+    const result = await generateTeamsExplicit({
       gameId,
       updatedBy: uid,
     });
     return NextResponse.json({
       ok: true,
-      message: decision.message,
-      action: decision.action,
-      playingCount: decision.playingCount,
+      message: result.decision.message,
+      action: result.decision.action,
+      playingCount: result.decision.playingCount,
     });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Regenerate failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    const msg = e instanceof Error ? e.message : "Generate failed";
+    const code =
+      e && typeof e === "object" && "code" in e
+        ? String((e as { code: string }).code)
+        : null;
+    const status =
+      code === "insufficient_players" || code === "missing_evaluation"
+        ? 400
+        : 500;
+    return NextResponse.json({ error: msg, code }, { status });
   }
 }

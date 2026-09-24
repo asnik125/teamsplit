@@ -21,11 +21,11 @@ import {
   assertNoDuplicatePlayers,
   autoRebalanceAfterMove,
   calculateOverall,
-  generateSnakeDraftTeams,
   movePlayerBetweenTeams,
   teamStrength,
   toPublicMembers,
 } from "@/lib/balancer";
+import { computeBestBalancedSplit } from "@/lib/team-generate";
 import type {
   Game,
   GameTeams,
@@ -153,11 +153,21 @@ function TeamBuilderContent() {
       return;
     }
     try {
-      const { teamA: a, teamB: b } = generateSnakeDraftTeams(pool);
+      const { teamA: pubA, teamB: pubB } = computeBestBalancedSplit({
+        rated: pool,
+        maybePlayerIds: new Set(),
+      });
+      const byId = new Map(pool.map((p) => [p.id, p]));
+      const a = pubA
+        .map((m) => byId.get(m.playerId))
+        .filter(Boolean) as RatedPlayer[];
+      const b = pubB
+        .map((m) => byId.get(m.playerId))
+        .filter(Boolean) as RatedPlayer[];
       assertNoDuplicatePlayers(a, b);
       setTeamA(a);
       setTeamB(b);
-      setManuallyAdjusted(true);
+      setManuallyAdjusted(false);
       setMessage("Teams generated (draft). Publish when ready.");
       if (published) setNeedsRepublish(true);
     } catch (e) {
@@ -325,7 +335,7 @@ function TeamBuilderContent() {
             disabled={busy}
             onClick={() => regenerateFromAttendance()}
           >
-            Regenerate teams
+            Generate Teams
           </button>
         </div>
       )}
@@ -376,7 +386,7 @@ function TeamBuilderContent() {
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" className="btn btn-primary" onClick={generate}>
-            Balance teams (snake draft)
+            Generate Teams
           </button>
           <button
             type="button"
@@ -384,7 +394,7 @@ function TeamBuilderContent() {
             disabled={busy}
             onClick={() => regenerateFromAttendance()}
           >
-            Regenerate from attendance
+            Generate from attendance
           </button>
         </div>
       </div>

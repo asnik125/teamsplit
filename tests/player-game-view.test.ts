@@ -21,6 +21,8 @@ function teams(): GameTeams {
     updatedBy: null,
     manuallyAdjusted: false,
     includeMaybePlayers: true,
+    stale: false,
+    eligibleFingerprint: "p1,p2,p3,p4,p5,p6",
   };
 }
 
@@ -37,7 +39,7 @@ describe("buildPlayerGameView", () => {
     });
     expect(v.showTeamLists).toBe(false);
     expect(v.showProgress).toBe(true);
-    expect(v.teamsMessage).toBe("Updating teams…");
+    expect(v.teamsMessage).toBe("Updating…");
   });
 
   it("ready shows teams", () => {

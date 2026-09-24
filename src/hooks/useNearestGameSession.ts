@@ -188,19 +188,17 @@ export function useNearestGameSession() {
     if (prev === status) return;
 
     const key = `${gId}_${playerId}`;
-    const affectsTeams = gId === teamsGameId;
     setError(null);
     setSavingKey(key);
     setGrid((cur) => ({
       ...cur,
       [gId]: { ...(cur[gId] ?? {}), [playerId]: status },
     }));
-    if (affectsTeams) setUpdatingTeams(true);
 
     try {
       await setAttendanceAndSync(user, gId, playerId, status);
       await reload();
-      if (affectsTeams && teamsGameId) {
+      if (gId === teamsGameId && teamsGameId) {
         const t = await getGameTeams(getClientDb(), teamsGameId);
         setTeams(t);
         setIncludeMaybe(Boolean(t?.includeMaybePlayers));
@@ -213,14 +211,12 @@ export function useNearestGameSession() {
       setError(formatUnknownError(e));
     } finally {
       setSavingKey(null);
-      if (affectsTeams) setUpdatingTeams(false);
     }
   }
 
   async function toggleIncludeMaybe(next: boolean) {
-    if (!user || !teamsGameId) return;
+    if (!user || !teamsGameId || !showAdminUI) return;
     setIncludeMaybe(next);
-    setUpdatingTeams(true);
     setError(null);
     try {
       await setIncludeMaybeApi(user, teamsGameId, next);
@@ -229,6 +225,23 @@ export function useNearestGameSession() {
       setIncludeMaybe(Boolean(t?.includeMaybePlayers));
     } catch (e) {
       setIncludeMaybe(!next);
+      setError(formatUnknownError(e));
+    }
+  }
+
+  async function generateTeams() {
+    if (!user || !teamsGameId || !showAdminUI) return;
+    setError(null);
+    setUpdatingTeams(true);
+    try {
+      const { regenerateTeamsApi } = await import(
+        "@/lib/firebase/attendance-api"
+      );
+      await regenerateTeamsApi(user, teamsGameId);
+      const t = await getGameTeams(getClientDb(), teamsGameId);
+      setTeams(t);
+      setIncludeMaybe(Boolean(t?.includeMaybePlayers));
+    } catch (e) {
       setError(formatUnknownError(e));
     } finally {
       setUpdatingTeams(false);
@@ -342,6 +355,7 @@ export function useNearestGameSession() {
     cellStatus,
     changeStatus,
     toggleIncludeMaybe,
+    generateTeams,
     persistManualTeams,
     toggleNoGame,
     reload,

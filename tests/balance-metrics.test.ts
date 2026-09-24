@@ -366,16 +366,37 @@ describe("privacy / Player View must not see balance metrics", () => {
   });
 });
 
-describe("Teams/snake generation unchanged by balance metrics", () => {
-  it("snake draft still sorts by Overall, not Balance Rating", async () => {
-    const { generateSnakeDraftTeams } = await import("@/lib/balancer");
-    const players = [
-      { id: "low-overall-high-balance", overall: 5, balanceRating: 9 },
-      { id: "high-overall-low-balance", overall: 9, balanceRating: 5 },
-      { id: "mid", overall: 7, balanceRating: 7 },
-      { id: "mid2", overall: 6, balanceRating: 8 },
-    ];
-    const { teamA } = generateSnakeDraftTeams(players);
-    expect(teamA[0]?.id).toBe("high-overall-low-balance");
+describe("Teams generation uses Overall, not Balance Rating", () => {
+  it("best-split ranks by mean overall gap across 11 dims", async () => {
+    const { computeBestBalancedSplit } = await import("@/lib/team-generate");
+    const { calculateOverall } = await import("@/lib/balancer");
+    const { RATING_KEYS } = await import("@/lib/types");
+    function mk(id: string, overallHint: number) {
+      const base = Math.max(1, Math.min(10, Math.round(overallHint)));
+      const ratings = Object.fromEntries(
+        RATING_KEYS.map((k) => [k, base])
+      ) as import("@/lib/types").PlayerRatings;
+      return {
+        id,
+        displayName: id,
+        email: null,
+        active: true,
+        linkedUid: null,
+        createdAt: "",
+        updatedAt: "",
+        ...ratings,
+        overall: calculateOverall(ratings),
+        balanceRating: 99 - overallHint,
+      };
+    }
+    const pool = [mk("hi", 9), mk("hi2", 9), mk("lo", 3), mk("lo2", 3)];
+    const best = computeBestBalancedSplit({
+      rated: pool,
+      maybePlayerIds: new Set(),
+    });
+    const aStrong = best.teamA.filter((m) => m.playerId.startsWith("hi")).length;
+    const bStrong = best.teamB.filter((m) => m.playerId.startsWith("hi")).length;
+    expect(aStrong).toBe(1);
+    expect(bStrong).toBe(1);
   });
 });

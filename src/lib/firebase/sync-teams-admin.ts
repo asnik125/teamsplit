@@ -1,6 +1,5 @@
 import {
   assertValidTeamSplit,
-  calculateOverall,
   teamSizeDiff,
 } from "../balancer";
 import type {
@@ -10,43 +9,34 @@ import type {
   GameTeams,
   Player,
   PlayerEvaluation,
-  PlayerRatings,
-  RatedPlayer,
   AppSettings,
   TeamMemberPublic,
 } from "../types";
-import { RATING_KEYS } from "../types";
 import {
-  decideTeamsSync,
   DEFAULT_MIN_PLAYING_FOR_TEAMS,
   isIncludedForTeams,
   type TeamsSyncDecision,
 } from "../team-sync";
-import {
-  activeEligiblePlayerIds,
-  nearestTeamsNeedRepair,
-} from "../player-lifecycle";
+import { activeEligiblePlayerIds } from "../player-lifecycle";
 import { nextUpcomingGame } from "../schedule";
+import {
+  areTeamsStale,
+  eligiblePlayerIdsFromAttendance,
+  eligiblePoolFingerprint,
+  teamsHaveComposition,
+  teamsStatusMessageForState,
+  TEAMS_STALE_MESSAGE,
+  TEAMS_READY_MESSAGE,
+} from "../team-eligibility";
+import {
+  buildRatedEligible,
+  computeBestBalancedSplit,
+  MissingEvaluationError,
+} from "../team-generate";
 import { getAdminDb } from "./admin";
 
 function nowIso() {
   return new Date().toISOString();
-}
-
-function ratingsFromEval(ev: PlayerEvaluation | undefined): PlayerRatings {
-  if (!ev) {
-    return Object.fromEntries(RATING_KEYS.map((k) => [k, 6])) as PlayerRatings;
-  }
-  return Object.fromEntries(RATING_KEYS.map((k) => [k, ev[k]])) as PlayerRatings;
-}
-
-function toRated(player: Player, ev: PlayerEvaluation | undefined): RatedPlayer {
-  const ratings = ratingsFromEval(ev);
-  return {
-    ...player,
-    ...ratings,
-    overall: calculateOverall(ratings),
-  };
 }
 
 async function loadSettings(): Promise<{
@@ -85,25 +75,6 @@ export async function canUserEditPlayerAttendance(input: {
   return allowPlayersEditOthersAttendance;
 }
 
-function buildIncluded(
-  attendance: AttendanceRecord[],
-  players: Player[],
-  evalMap: Record<string, PlayerEvaluation>,
-  includeMaybe: boolean
-): { includedRated: RatedPlayer[]; maybePlayerIds: Set<string> } {
-  const maybePlayerIds = new Set<string>();
-  const includedRated = attendance
-    .filter((a) => isIncludedForTeams(a.status, includeMaybe))
-    .map((a) => {
-      const pl = players.find((p) => p.id === a.playerId && p.active);
-      if (!pl) return null;
-      if (a.status === "maybe") maybePlayerIds.add(pl.id);
-      return toRated(pl, evalMap[pl.id]);
-    })
-    .filter(Boolean) as RatedPlayer[];
-  return { includedRated, maybePlayerIds };
-}
-
 async function loadNearestUpcomingGameId(): Promise<string | null> {
   const snap = await getAdminDb()
     .collection("games")
@@ -113,14 +84,14 @@ async function loadNearestUpcomingGameId(): Promise<string | null> {
   return nextUpcomingGame(games)?.id ?? null;
 }
 
-/** Attendance save only — no team sync (used for future games). */
-function attendanceOnlyDecision(
+function emptyDecision(
   includeMaybePlayers: boolean,
-  minPlaying: number
+  minPlaying: number,
+  message: string
 ): TeamsSyncDecision {
   return {
     action: "unchanged",
-    message: "Attendance saved",
+    message,
     playingCount: 0,
     includedCount: 0,
     minPlaying,
@@ -135,62 +106,48 @@ function attendanceOnlyDecision(
   };
 }
 
-async function applyTeamsDecision(input: {
+/**
+ * Mark existing composition outdated without changing membership.
+ * Preserves manual adjustments and previous roster for Admin review.
+ */
+async function refreshGameTeamsBanner(input: {
   gameId: string;
-  decision: TeamsSyncDecision;
-  updatedBy: string | null;
+  teams: GameTeams | null;
+  eligibleIds: string[];
+  minPlaying: number;
   lastAttendanceChange?: Game["lastAttendanceChange"];
-}): Promise<void> {
+}): Promise<{ stale: boolean; message: string }> {
   const db = getAdminDb();
-  const teamsRef = db.collection("gameTeams").doc(input.gameId);
-  const gameRef = db.collection("games").doc(input.gameId);
   const now = nowIso();
+  const hasComposition = teamsHaveComposition(input.teams);
+  const stale = areTeamsStale({
+    teams: input.teams,
+    currentEligibleIds: input.eligibleIds,
+  });
+  const message = teamsStatusMessageForState({
+    hasComposition,
+    stale,
+    includedCount: input.eligibleIds.length,
+    minPlaying: input.minPlaying,
+  });
 
-  if (input.decision.clearTeams) {
-    await teamsRef.set({
-      gameId: input.gameId,
-      teamA: [],
-      teamB: [],
-      published: false,
-      publishedAt: null,
+  if (hasComposition && stale && input.teams && !input.teams.stale) {
+    await db.collection("gameTeams").doc(input.gameId).update({
+      stale: true,
       updatedAt: now,
-      updatedBy: input.updatedBy,
-      manuallyAdjusted: false,
-      includeMaybePlayers: input.decision.includeMaybePlayers,
-    } satisfies GameTeams);
-  } else if (input.decision.writeTeams) {
-    const payload: GameTeams = {
-      gameId: input.gameId,
-      teamA: input.decision.teamA,
-      teamB: input.decision.teamB,
-      published: false,
-      publishedAt: null,
-      updatedAt: now,
-      updatedBy: input.updatedBy,
-      manuallyAdjusted: false,
-      includeMaybePlayers: input.decision.includeMaybePlayers,
-    };
-    await teamsRef.set(payload);
-  } else {
-    // Keep includeMaybe flag even when unchanged / insufficient without clear
-    const snap = await teamsRef.get();
-    if (snap.exists) {
-      await teamsRef.update({
-        includeMaybePlayers: input.decision.includeMaybePlayers,
-        updatedAt: now,
-      });
-    }
+    });
   }
 
   const gameUpdate: Partial<Game> = {
     updatedAt: now,
-    teamsMayBeStale: false,
-    teamsStatusMessage: input.decision.message,
+    teamsMayBeStale: stale,
+    teamsStatusMessage: message,
   };
   if (input.lastAttendanceChange) {
     gameUpdate.lastAttendanceChange = input.lastAttendanceChange;
   }
-  await gameRef.update(gameUpdate);
+  await db.collection("games").doc(input.gameId).update(gameUpdate);
+  return { stale, message };
 }
 
 export interface AttendanceSyncResult {
@@ -201,6 +158,10 @@ export interface AttendanceSyncResult {
   displayName: string;
 }
 
+/**
+ * Save attendance only. Never regenerates or clears gameTeams.
+ * If a composition exists and the eligible pool changed, marks it stale.
+ */
 export async function applyAttendanceAndSyncTeams(input: {
   gameId: string;
   playerId: string;
@@ -214,13 +175,12 @@ export async function applyAttendanceAndSyncTeams(input: {
     .doc(`${input.gameId}_${input.playerId}`);
   const teamsRef = db.collection("gameTeams").doc(input.gameId);
 
-  const [gameSnap, attendanceSnap, teamsSnap, playersSnap, evalsSnap, settings] =
+  const [gameSnap, attendanceSnap, teamsSnap, playersSnap, settings] =
     await Promise.all([
       gameRef.get(),
       attendanceRef.get(),
       teamsRef.get(),
       db.collection("players").get(),
-      db.collection("playerEvaluations").get(),
       loadSettings(),
     ]);
 
@@ -258,33 +218,6 @@ export async function applyAttendanceAndSyncTeams(input: {
     updatedBy: input.updatedBy,
   } satisfies AttendanceRecord);
 
-  const nearestId = await loadNearestUpcomingGameId();
-  const isNearest = nearestId === input.gameId;
-
-  // Future (or past) games: save attendance only — do not touch Teams panel game.
-  if (!isNearest) {
-    await gameRef.update({
-      updatedAt: nowIso(),
-      lastAttendanceChange: {
-        playerId: input.playerId,
-        displayName,
-        previousStatus,
-        nextStatus: input.status,
-        at: nowIso(),
-      },
-    });
-    return {
-      decision: attendanceOnlyDecision(
-        Boolean(existingTeams?.includeMaybePlayers),
-        settings.minPlaying
-      ),
-      previousStatus,
-      nextStatus: input.status,
-      playerId: input.playerId,
-      displayName,
-    };
-  }
-
   const allAttendanceSnap = await db
     .collection("attendance")
     .where("gameId", "==", input.gameId)
@@ -292,43 +225,18 @@ export async function applyAttendanceAndSyncTeams(input: {
   const attendance = allAttendanceSnap.docs.map(
     (d) => d.data() as AttendanceRecord
   );
-
-  const evalMap = Object.fromEntries(
-    evalsSnap.docs.map((d) => {
-      const ev = d.data() as PlayerEvaluation;
-      return [ev.playerId, ev];
-    })
-  );
-
   const includeMaybe = Boolean(existingTeams?.includeMaybePlayers);
-
-  const { includedRated, maybePlayerIds } = buildIncluded(
-    attendance,
+  const eligibleIds = eligiblePlayerIdsFromAttendance({
     players,
-    evalMap,
-    includeMaybe
-  );
-
-  const decision = decideTeamsSync({
-    includedRated,
-    maybePlayerIds,
-    minPlaying: settings.minPlaying,
-    includeMaybePlayers: includeMaybe,
-    existing: existingTeams
-      ? {
-          teamA: existingTeams.teamA,
-          teamB: existingTeams.teamB,
-          published: Boolean(existingTeams.published),
-          manuallyAdjusted: Boolean(existingTeams.manuallyAdjusted),
-          includeMaybePlayers: Boolean(existingTeams.includeMaybePlayers),
-        }
-      : null,
+    attendance,
+    includeMaybe,
   });
 
-  await applyTeamsDecision({
+  const { stale, message } = await refreshGameTeamsBanner({
     gameId: input.gameId,
-    decision,
-    updatedBy: input.updatedBy,
+    teams: existingTeams,
+    eligibleIds,
+    minPlaying: settings.minPlaying,
     lastAttendanceChange: {
       playerId: input.playerId,
       displayName,
@@ -339,7 +247,11 @@ export async function applyAttendanceAndSyncTeams(input: {
   });
 
   return {
-    decision,
+    decision: emptyDecision(
+      includeMaybe,
+      settings.minPlaying,
+      stale ? TEAMS_STALE_MESSAGE : message
+    ),
     previousStatus,
     nextStatus: input.status,
     playerId: input.playerId,
@@ -347,7 +259,11 @@ export async function applyAttendanceAndSyncTeams(input: {
   };
 }
 
-export async function setIncludeMaybeAndRecalculate(input: {
+/**
+ * Toggle Include Maybe preference. Does not regenerate teams.
+ * Marks existing composition stale when the eligible pool changes.
+ */
+export async function setIncludeMaybePreference(input: {
   gameId: string;
   includeMaybePlayers: boolean;
   updatedBy: string | null;
@@ -363,6 +279,118 @@ export async function setIncludeMaybeAndRecalculate(input: {
     );
   }
 
+  const [gameSnap, attendanceSnap, playersSnap, teamsSnap, settings] =
+    await Promise.all([
+      gameRef.get(),
+      db.collection("attendance").where("gameId", "==", input.gameId).get(),
+      db.collection("players").get(),
+      teamsRef.get(),
+      loadSettings(),
+    ]);
+
+  if (!gameSnap.exists) throw new Error(`Game ${input.gameId} not found`);
+  const game = gameSnap.data() as Game;
+  if (Boolean(game.noGame)) {
+    throw new Error("Cannot update Include Maybe: this date is marked No Game");
+  }
+
+  const attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+  const players = playersSnap.docs.map((d) => d.data() as Player);
+  const existingTeams = teamsSnap.exists
+    ? (teamsSnap.data() as GameTeams)
+    : null;
+  const now = nowIso();
+
+  const nextTeams: GameTeams = existingTeams
+    ? {
+        ...existingTeams,
+        includeMaybePlayers: input.includeMaybePlayers,
+        updatedAt: now,
+        updatedBy: input.updatedBy,
+      }
+    : {
+        gameId: input.gameId,
+        teamA: [],
+        teamB: [],
+        published: false,
+        publishedAt: null,
+        updatedAt: now,
+        updatedBy: input.updatedBy,
+        manuallyAdjusted: false,
+        includeMaybePlayers: input.includeMaybePlayers,
+        stale: false,
+        eligibleFingerprint: null,
+      };
+
+  const eligibleIds = eligiblePlayerIdsFromAttendance({
+    players,
+    attendance,
+    includeMaybe: input.includeMaybePlayers,
+  });
+  const stale = areTeamsStale({
+    teams: {
+      ...nextTeams,
+      // Evaluate pool change against previous fingerprint / membership
+      includeMaybePlayers: input.includeMaybePlayers,
+    },
+    currentEligibleIds: eligibleIds,
+  });
+
+  if (teamsHaveComposition(existingTeams) && stale) {
+    nextTeams.stale = true;
+  }
+
+  await teamsRef.set(nextTeams);
+  const message = teamsStatusMessageForState({
+    hasComposition: teamsHaveComposition(nextTeams),
+    stale: Boolean(nextTeams.stale),
+    includedCount: eligibleIds.length,
+    minPlaying: settings.minPlaying,
+  });
+  await gameRef.update({
+    updatedAt: now,
+    teamsMayBeStale: Boolean(nextTeams.stale),
+    teamsStatusMessage: message,
+  });
+
+  return emptyDecision(
+    input.includeMaybePlayers,
+    settings.minPlaying,
+    message
+  );
+}
+
+/** @deprecated Use setIncludeMaybePreference — kept for import compatibility. */
+export async function setIncludeMaybeAndRecalculate(input: {
+  gameId: string;
+  includeMaybePlayers: boolean;
+  updatedBy: string | null;
+}): Promise<TeamsSyncDecision> {
+  return setIncludeMaybePreference(input);
+}
+
+export interface GenerateTeamsResult {
+  decision: TeamsSyncDecision;
+  stale: false;
+}
+
+/**
+ * Explicit Admin Generate: single best skill-balanced split from current
+ * attendance. Replaces any prior/manual composition.
+ */
+export async function generateTeamsExplicit(input: {
+  gameId: string;
+  updatedBy: string | null;
+}): Promise<GenerateTeamsResult> {
+  const db = getAdminDb();
+  const gameRef = db.collection("games").doc(input.gameId);
+  const teamsRef = db.collection("gameTeams").doc(input.gameId);
+
+  const nearestId = await loadNearestUpcomingGameId();
+  if (nearestId !== input.gameId) {
+    throw new Error("Generate Teams only applies to the nearest upcoming game");
+  }
+
   const [gameSnap, attendanceSnap, playersSnap, evalsSnap, teamsSnap, settings] =
     await Promise.all([
       gameRef.get(),
@@ -374,12 +402,15 @@ export async function setIncludeMaybeAndRecalculate(input: {
     ]);
 
   if (!gameSnap.exists) throw new Error(`Game ${input.gameId} not found`);
-
   const game = gameSnap.data() as Game;
   if (Boolean(game.noGame)) {
     throw new Error("Cannot generate teams: this date is marked No Game");
   }
 
+  const existingTeams = teamsSnap.exists
+    ? (teamsSnap.data() as GameTeams)
+    : null;
+  const includeMaybe = Boolean(existingTeams?.includeMaybePlayers);
   const attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
   const players = playersSnap.docs.map((d) => d.data() as Player);
   const evalMap = Object.fromEntries(
@@ -389,98 +420,157 @@ export async function setIncludeMaybeAndRecalculate(input: {
     })
   );
 
-  const existingTeams = teamsSnap.exists
-    ? (teamsSnap.data() as GameTeams)
-    : null;
+  const eligibleIds = eligiblePlayerIdsFromAttendance({
+    players,
+    attendance,
+    includeMaybe,
+  });
 
-  // Persist preference even before teams exist
-  if (existingTeams) {
-    await teamsRef.update({
-      includeMaybePlayers: input.includeMaybePlayers,
+  if (eligibleIds.length < settings.minPlaying) {
+    const message = "Not enough players yet.";
+    await gameRef.update({
       updatedAt: nowIso(),
+      teamsMayBeStale: false,
+      teamsStatusMessage: message,
     });
-  } else {
-    await teamsRef.set({
-      gameId: input.gameId,
-      teamA: [] as TeamMemberPublic[],
-      teamB: [] as TeamMemberPublic[],
-      published: false,
-      publishedAt: null,
-      updatedAt: nowIso(),
-      updatedBy: input.updatedBy,
-      manuallyAdjusted: false,
-      includeMaybePlayers: input.includeMaybePlayers,
-    } satisfies GameTeams);
+    throw Object.assign(new Error(message), {
+      code: "insufficient_players",
+      includedCount: eligibleIds.length,
+      minPlaying: settings.minPlaying,
+    });
   }
 
-  const { includedRated, maybePlayerIds } = buildIncluded(
-    attendance,
-    players,
-    evalMap,
-    input.includeMaybePlayers
+  const maybePlayerIds = new Set(
+    attendance
+      .filter((a) => a.status === "maybe" && eligibleIds.includes(a.playerId))
+      .map((a) => a.playerId)
   );
 
-  const decision = decideTeamsSync({
-    includedRated,
+  let rated;
+  try {
+    ({ rated } = buildRatedEligible({
+      eligibleIds,
+      players,
+      evalMap,
+      maybePlayerIds,
+    }));
+  } catch (e) {
+    if (e instanceof MissingEvaluationError) {
+      throw Object.assign(e, { code: "missing_evaluation" });
+    }
+    throw e;
+  }
+
+  const best = computeBestBalancedSplit({
+    rated,
     maybePlayerIds,
-    minPlaying: settings.minPlaying,
-    includeMaybePlayers: input.includeMaybePlayers,
-    existing: {
-      teamA: existingTeams?.teamA ?? [],
-      teamB: existingTeams?.teamB ?? [],
-      published: Boolean(existingTeams?.published),
-      manuallyAdjusted: Boolean(existingTeams?.manuallyAdjusted),
-      includeMaybePlayers: input.includeMaybePlayers,
-    },
   });
 
-  await applyTeamsDecision({
+  const fingerprint = eligiblePoolFingerprint(eligibleIds);
+  const now = nowIso();
+  const payload: GameTeams = {
     gameId: input.gameId,
-    decision,
+    teamA: best.teamA,
+    teamB: best.teamB,
+    published: false,
+    publishedAt: null,
+    updatedAt: now,
     updatedBy: input.updatedBy,
+    manuallyAdjusted: false,
+    includeMaybePlayers: includeMaybe,
+    eligibleFingerprint: fingerprint,
+    stale: false,
+  };
+  await teamsRef.set(payload);
+  await gameRef.update({
+    updatedAt: now,
+    teamsMayBeStale: false,
+    teamsStatusMessage: TEAMS_READY_MESSAGE,
   });
 
-  return decision;
+  return {
+    decision: {
+      action: "created",
+      message: TEAMS_READY_MESSAGE,
+      playingCount: eligibleIds.length,
+      includedCount: eligibleIds.length,
+      minPlaying: settings.minPlaying,
+      includeMaybePlayers: includeMaybe,
+      writeTeams: true,
+      clearTeams: false,
+      teamA: best.teamA,
+      teamB: best.teamB,
+      markStale: false,
+      manuallyAdjusted: false,
+      keepPublished: false,
+    },
+    stale: false,
+  };
 }
 
+/** @deprecated Prefer generateTeamsExplicit — Admin regenerate route. */
 export async function regenerateTeamsFromAttendance(input: {
   gameId: string;
   updatedBy: string | null;
 }): Promise<TeamsSyncDecision> {
-  const db = getAdminDb();
-  const teamsSnap = await db.collection("gameTeams").doc(input.gameId).get();
-  const includeMaybe = teamsSnap.exists
-    ? Boolean((teamsSnap.data() as GameTeams).includeMaybePlayers)
-    : false;
-  return setIncludeMaybeAndRecalculate({
-    gameId: input.gameId,
-    includeMaybePlayers: includeMaybe,
-    updatedBy: input.updatedBy,
-  });
+  const result = await generateTeamsExplicit(input);
+  return result.decision;
 }
 
 /**
- * Always rebuild nearest upcoming gameTeams from active eligible attendance.
- * Used by player lifecycle (activate / deactivate / delete) and integrity repair.
- * Attendance eligibility wins over manuallyAdjusted arrangements.
+ * Lifecycle helper: mark nearest teams stale when roster eligibility may have
+ * changed (activate/deactivate/delete). Does not regenerate.
  */
+export async function markNearestTeamsStaleAfterLifecycle(
+  updatedBy: string | null
+): Promise<{ gameId: string | null; marked: boolean }> {
+  void updatedBy;
+  const nearestId = await loadNearestUpcomingGameId();
+  if (!nearestId) return { gameId: null, marked: false };
+
+  const db = getAdminDb();
+  const [teamsSnap, attendanceSnap, playersSnap, settings] = await Promise.all([
+    db.collection("gameTeams").doc(nearestId).get(),
+    db.collection("attendance").where("gameId", "==", nearestId).get(),
+    db.collection("players").get(),
+    loadSettings(),
+  ]);
+  const teams = teamsSnap.exists ? (teamsSnap.data() as GameTeams) : null;
+  if (!teamsHaveComposition(teams)) {
+    return { gameId: nearestId, marked: false };
+  }
+  const players = playersSnap.docs.map((d) => d.data() as Player);
+  const attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+  const eligibleIds = eligiblePlayerIdsFromAttendance({
+    players,
+    attendance,
+    includeMaybe: Boolean(teams!.includeMaybePlayers),
+  });
+  const { stale } = await refreshGameTeamsBanner({
+    gameId: nearestId,
+    teams,
+    eligibleIds,
+    minPlaying: settings.minPlaying,
+  });
+  return { gameId: nearestId, marked: stale };
+}
+
+/** @deprecated No longer recalculates — marks stale if pool drifted. */
 export async function recalculateNearestUpcomingTeams(
   updatedBy: string | null
 ): Promise<{ gameId: string | null; decision: TeamsSyncDecision | null }> {
-  const nearestId = await loadNearestUpcomingGameId();
-  if (!nearestId) {
-    return { gameId: null, decision: null };
-  }
-  const decision = await regenerateTeamsFromAttendance({
-    gameId: nearestId,
-    updatedBy,
-  });
-  return { gameId: nearestId, decision };
+  const { gameId, marked } = await markNearestTeamsStaleAfterLifecycle(updatedBy);
+  return {
+    gameId,
+    decision: gameId
+      ? emptyDecision(false, DEFAULT_MIN_PLAYING_FOR_TEAMS, marked ? TEAMS_STALE_MESSAGE : "ok")
+      : null,
+  };
 }
 
 /**
- * Inspect stored nearest gameTeams against the authoritative eligible set.
- * If stale (deleted / inactive / ineligible / duplicate / missing), recalculate.
+ * Integrity endpoint: no longer auto-regenerates from attendance.
+ * Returns whether the composition is stale for UI refresh.
  */
 export async function ensureNearestTeamsIntegrity(
   updatedBy: string | null
@@ -489,47 +579,33 @@ export async function ensureNearestTeamsIntegrity(
   repaired: boolean;
   decision: TeamsSyncDecision | null;
 }> {
-  const db = getAdminDb();
+  void updatedBy;
   const nearestId = await loadNearestUpcomingGameId();
   if (!nearestId) {
     return { gameId: null, repaired: false, decision: null };
   }
-
+  const db = getAdminDb();
   const [teamsSnap, attendanceSnap, playersSnap, settings] = await Promise.all([
     db.collection("gameTeams").doc(nearestId).get(),
     db.collection("attendance").where("gameId", "==", nearestId).get(),
     db.collection("players").get(),
     loadSettings(),
   ]);
-
   const teams = teamsSnap.exists ? (teamsSnap.data() as GameTeams) : null;
-  const includeMaybe = Boolean(teams?.includeMaybePlayers);
   const players = playersSnap.docs.map((d) => d.data() as Player);
-  const attendance = attendanceSnap.docs.map(
-    (d) => d.data() as AttendanceRecord
-  );
-  const eligibleIds = activeEligiblePlayerIds({
+  const attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+  const eligibleIds = eligiblePlayerIdsFromAttendance({
     players,
     attendance,
-    includeMaybe,
+    includeMaybe: Boolean(teams?.includeMaybePlayers),
   });
-
-  const needsRepair = nearestTeamsNeedRepair({
-    teamA: teams?.teamA ?? [],
-    teamB: teams?.teamB ?? [],
+  await refreshGameTeamsBanner({
+    gameId: nearestId,
+    teams,
     eligibleIds,
     minPlaying: settings.minPlaying,
   });
-
-  if (!needsRepair) {
-    return { gameId: nearestId, repaired: false, decision: null };
-  }
-
-  const decision = await regenerateTeamsFromAttendance({
-    gameId: nearestId,
-    updatedBy,
-  });
-  return { gameId: nearestId, repaired: true, decision };
+  return { gameId: nearestId, repaired: false, decision: null };
 }
 
 export async function saveManualTeams(input: {
@@ -562,9 +638,8 @@ export async function saveManualTeams(input: {
     throw new Error("Cannot edit teams: this date is marked No Game");
   }
 
-  const includeMaybe = teamsSnap.exists
-    ? Boolean((teamsSnap.data() as GameTeams).includeMaybePlayers)
-    : false;
+  const existing = teamsSnap.exists ? (teamsSnap.data() as GameTeams) : null;
+  const includeMaybe = Boolean(existing?.includeMaybePlayers);
   const players = playersSnap.docs.map((d) => d.data() as Player);
   const attendance = attendanceSnap.docs.map(
     (d) => d.data() as AttendanceRecord
@@ -584,9 +659,9 @@ export async function saveManualTeams(input: {
     }
   }
 
-  const teamsRef = db.collection("gameTeams").doc(input.gameId);
+  const fingerprint = eligiblePoolFingerprint([...eligible]);
   const now = nowIso();
-  await teamsRef.set({
+  await db.collection("gameTeams").doc(input.gameId).set({
     gameId: input.gameId,
     teamA: input.teamA,
     teamB: input.teamB,
@@ -596,11 +671,13 @@ export async function saveManualTeams(input: {
     updatedBy: input.updatedBy,
     manuallyAdjusted: true,
     includeMaybePlayers: includeMaybe,
+    eligibleFingerprint: fingerprint,
+    stale: false,
   } satisfies GameTeams);
   await db.collection("games").doc(input.gameId).update({
     updatedAt: now,
     teamsMayBeStale: false,
-    teamsStatusMessage: "Teams ready",
+    teamsStatusMessage: TEAMS_READY_MESSAGE,
   });
 }
 
@@ -639,7 +716,6 @@ export async function setGameNoGame(input: {
       .get();
     clearedAttendance = attendanceSnap.size;
 
-    // Firestore batches max 500 ops
     const docs = attendanceSnap.docs;
     for (let i = 0; i < docs.length; i += 450) {
       const batch = db.batch();
@@ -649,11 +725,19 @@ export async function setGameNoGame(input: {
       await batch.commit();
     }
 
-    const teamsRef = db.collection("gameTeams").doc(input.gameId);
-    const teamsSnap = await teamsRef.get();
-    if (teamsSnap.exists) {
-      await teamsRef.delete();
-    }
+    await db.collection("gameTeams").doc(input.gameId).set({
+      gameId: input.gameId,
+      teamA: [],
+      teamB: [],
+      published: false,
+      publishedAt: null,
+      updatedAt: now,
+      updatedBy: input.updatedBy,
+      manuallyAdjusted: false,
+      includeMaybePlayers: false,
+      stale: false,
+      eligibleFingerprint: null,
+    } satisfies GameTeams);
 
     await gameRef.update({
       noGame: true,
@@ -668,9 +752,11 @@ export async function setGameNoGame(input: {
       updatedAt: now,
       teamsMayBeStale: false,
       teamsStatusMessage: null,
-      lastAttendanceChange: null,
     });
   }
 
   return { noGame: nextNoGame, clearedAttendance };
 }
+
+// Re-export for callers that checked inclusion
+export { isIncludedForTeams };

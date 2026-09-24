@@ -151,8 +151,22 @@ export interface GameTeams {
   updatedAt: string;
   updatedBy: string | null;
   manuallyAdjusted: boolean;
-  /** When true, Playing + Maybe are included in auto teams */
+  /** When true, Playing + Maybe are included when generating teams */
   includeMaybePlayers: boolean;
+  /**
+   * Fingerprint of eligible player ids at last Generate (sorted id join).
+   * When current attendance pool differs, composition is stale.
+   */
+  eligibleFingerprint?: string | null;
+  /** Explicit stale flag (also derived from fingerprint mismatch). */
+  stale?: boolean;
+}
+
+/** @deprecated Legacy multi-alternative shape — no longer written. */
+export interface TeamCompositionAlternative {
+  teamA: TeamMemberPublic[];
+  teamB: TeamMemberPublic[];
+  imbalance: number;
 }
 
 export interface RatedPlayer extends Player, PlayerRatings {

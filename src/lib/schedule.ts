@@ -1,4 +1,8 @@
 import type { AttendanceStatus, Game, GameStatus, Player } from "./types";
+import { vancouverLocalToUtc } from "./notifications/timezone";
+
+/** IANA zone for all game wall-clock times (kickoff, nearest-game, locks). */
+export const GAME_TIMEZONE = "America/Vancouver" as const;
 
 export interface WeeklyScheduleInput {
   firstDate: string; // YYYY-MM-DD
@@ -271,12 +275,13 @@ export function gamesForSeason(games: Game[], seasonId: string): Game[] {
   return games.filter((g) => g.seasonId === seasonId);
 }
 
-/** Local start datetime ms for a game (date + startTime). */
+/** Local start datetime ms for a game (date + startTime) in America/Vancouver. */
 export function gameStartMs(game: Game): number {
-  const [y, m, d] = game.date.split("-").map(Number);
-  const [hh, mm] = (game.startTime || "00:00").split(":").map(Number);
-  if (!y || !m || !d) return Number.NaN;
-  return new Date(y, m - 1, d, hh || 0, mm || 0, 0, 0).getTime();
+  return vancouverLocalToUtc(
+    game.date,
+    game.startTime || "00:00",
+    GAME_TIMEZONE
+  ).getTime();
 }
 
 /** True while the game's local start datetime is still in the future. */

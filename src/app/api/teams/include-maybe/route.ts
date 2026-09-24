@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getAdminAuth, getAdminDb } from "@/lib/firebase/admin";
-import { setIncludeMaybeAndRecalculate } from "@/lib/firebase/sync-teams-admin";
+import { setIncludeMaybePreference } from "@/lib/firebase/sync-teams-admin";
 import type { UserProfile } from "@/lib/types";
 
-async function requireUser(req: NextRequest) {
+async function requireAdmin(req: NextRequest) {
   const header = req.headers.get("authorization") ?? "";
   const match = /^Bearer\s+(.+)$/i.exec(header);
   if (!match) {
@@ -16,8 +16,8 @@ async function requireUser(req: NextRequest) {
       return { error: NextResponse.json({ error: "User not found" }, { status: 403 }) };
     }
     const profile = userSnap.data() as UserProfile;
-    if (!profile.active) {
-      return { error: NextResponse.json({ error: "Inactive user" }, { status: 403 }) };
+    if (!profile.active || profile.role !== "admin") {
+      return { error: NextResponse.json({ error: "Admin only" }, { status: 403 }) };
     }
     return { uid: decoded.uid, profile };
   } catch {
@@ -25,9 +25,9 @@ async function requireUser(req: NextRequest) {
   }
 }
 
-/** Any active user may toggle Include Maybe for a game (affects displayed teams). */
+/** Admin-only: toggle Include Maybe (marks teams stale; does not regenerate). */
 export async function POST(req: NextRequest) {
-  const auth = await requireUser(req);
+  const auth = await requireAdmin(req);
   if ("error" in auth && auth.error) return auth.error;
   const { uid } = auth as { uid: string };
 
@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const decision = await setIncludeMaybeAndRecalculate({
+    const decision = await setIncludeMaybePreference({
       gameId,
       includeMaybePlayers: body.includeMaybePlayers,
       updatedBy: uid,

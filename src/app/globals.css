@@ -701,6 +701,28 @@ body {
   line-height: 1.35;
 }
 
+.teams-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0.45rem 0 0.55rem;
+}
+
+.teams-option-indicator {
+  margin: 0 0 0.45rem;
+  font-size: 0.75rem;
+  color: #94a3b8;
+}
+
+.teams-note-stale {
+  color: #fbbf24 !important;
+  font-weight: 700;
+}
+
+.m-teams-actions {
+  margin: 0.35rem 0;
+}
+
 .teams-count {
   margin: 0 0 0.35rem;
   font-size: 0.8125rem;

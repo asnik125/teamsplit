@@ -89,7 +89,12 @@ export async function saveManualTeamsApi(
 export async function regenerateTeamsApi(
   user: User,
   gameId: string
-): Promise<{ ok: true; message: string; action: string; playingCount: number }> {
+): Promise<{
+  ok: true;
+  message: string;
+  action: string;
+  playingCount: number;
+}> {
   const token = await user.getIdToken();
   const res = await fetch("/api/teams/regenerate", {
     method: "POST",
@@ -107,11 +112,11 @@ export async function regenerateTeamsApi(
     error?: string;
   };
   if (!res.ok || !data.ok) {
-    throw new Error(data.error || `Regenerate failed (${res.status})`);
+    throw new Error(data.error || `Generate failed (${res.status})`);
   }
   return {
     ok: true,
-    message: data.message ?? "Teams regenerated.",
+    message: data.message ?? "Teams generated.",
     action: data.action ?? "created",
     playingCount: data.playingCount ?? 0,
   };

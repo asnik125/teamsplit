@@ -8,8 +8,19 @@ import {
   DEFAULT_MIN_PLAYING_FOR_TEAMS,
   insufficientMessage,
 } from "./team-sync";
+import {
+  areTeamsStale,
+  TEAMS_AWAITING_GENERATE_MESSAGE,
+  TEAMS_STALE_MESSAGE,
+  teamsHaveComposition,
+} from "./team-eligibility";
 
-export type PlayerTeamsPhase = "insufficient" | "updating" | "ready";
+export type PlayerTeamsPhase =
+  | "insufficient"
+  | "updating"
+  | "ready"
+  | "stale"
+  | "awaiting_generate";
 
 export interface PlayerGameViewModel {
   statusLabel: string;
@@ -27,6 +38,8 @@ export interface PlayerGameViewModel {
   includeMaybePlayers: boolean;
   teamA: TeamMemberPublic[];
   teamB: TeamMemberPublic[];
+  stale: boolean;
+  manuallyAdjusted: boolean;
 }
 
 function statusLabel(status: AttendanceStatus): string {
@@ -49,16 +62,15 @@ function findMyTeam(
 export function buildPlayerGameView(input: {
   myStatus: AttendanceStatus;
   myPlayerId: string | null | undefined;
-  /** Playing attendance count (display). */
   playingCount: number;
-  /** Maybe attendance count (display). */
   maybeCount: number;
-  /** Count included in team generation (Playing, + Maybe if toggled). */
   includedCount: number;
   currentTeams: GameTeams | null;
   minPlaying?: number;
   isUpdating?: boolean;
   includeMaybePlayers?: boolean;
+  /** Current eligible ids for stale detection (optional; uses teams.stale if omitted). */
+  currentEligibleIds?: string[];
 }): PlayerGameViewModel {
   const minPlaying = Math.max(
     2,
@@ -82,67 +94,69 @@ export function buildPlayerGameView(input: {
     maybeCount,
   });
 
+  const base = {
+    statusLabel: statusLabel(myStatus),
+    statusKind: myStatus,
+    playingCount,
+    maybeCount,
+    includedCount,
+    minPlaying,
+    confirmedLabel,
+    includeMaybePlayers,
+    manuallyAdjusted: Boolean(currentTeams?.manuallyAdjusted),
+  };
+
   if (isUpdating) {
     return {
-      statusLabel: statusLabel(myStatus),
-      statusKind: myStatus,
-      playingCount,
-      maybeCount,
-      includedCount,
-      minPlaying,
-      confirmedLabel,
+      ...base,
       teamsPhase: "updating",
-      teamsMessage: "Updating teams…",
+      teamsMessage: "Updating…",
       myTeamLabel: null,
       showTeamLists: false,
       showProgress: true,
-      includeMaybePlayers,
       teamA: [],
       teamB: [],
+      stale: false,
     };
   }
 
   if (includedCount < minPlaying) {
+    const hasLists = teamsHaveComposition(currentTeams);
     return {
-      statusLabel: statusLabel(myStatus),
-      statusKind: myStatus,
-      playingCount,
-      maybeCount,
-      includedCount,
-      minPlaying,
-      confirmedLabel,
+      ...base,
       teamsPhase: "insufficient",
       teamsMessage: insufficientMessage(minPlaying),
       myTeamLabel: null,
-      showTeamLists: false,
+      showTeamLists: hasLists,
       showProgress: false,
-      includeMaybePlayers,
-      teamA: [],
-      teamB: [],
+      teamA: currentTeams?.teamA ?? [],
+      teamB: currentTeams?.teamB ?? [],
+      stale: hasLists,
     };
   }
 
-  const hasTeams =
-    Boolean(currentTeams) &&
-    currentTeams!.teamA.length + currentTeams!.teamB.length > 0;
+  const hasTeams = teamsHaveComposition(currentTeams);
+  const isStale =
+    hasTeams &&
+    (Boolean(currentTeams!.stale) ||
+      (input.currentEligibleIds
+        ? areTeamsStale({
+            teams: currentTeams,
+            currentEligibleIds: input.currentEligibleIds,
+          })
+        : false));
 
   if (!hasTeams) {
     return {
-      statusLabel: statusLabel(myStatus),
-      statusKind: myStatus,
-      playingCount,
-      maybeCount,
-      includedCount,
-      minPlaying,
-      confirmedLabel,
-      teamsPhase: "updating",
-      teamsMessage: "Updating teams…",
+      ...base,
+      teamsPhase: "awaiting_generate",
+      teamsMessage: TEAMS_AWAITING_GENERATE_MESSAGE,
       myTeamLabel: null,
       showTeamLists: false,
-      showProgress: true,
-      includeMaybePlayers,
+      showProgress: false,
       teamA: [],
       teamB: [],
+      stale: false,
     };
   }
 
@@ -152,21 +166,29 @@ export function buildPlayerGameView(input: {
       ? findMyTeam(myPlayerId, teams)
       : null;
 
+  if (isStale) {
+    return {
+      ...base,
+      teamsPhase: "stale",
+      teamsMessage: TEAMS_STALE_MESSAGE,
+      myTeamLabel: myTeam,
+      showTeamLists: true,
+      showProgress: false,
+      teamA: teams.teamA,
+      teamB: teams.teamB,
+      stale: true,
+    };
+  }
+
   return {
-    statusLabel: statusLabel(myStatus),
-    statusKind: myStatus,
-    playingCount,
-    maybeCount,
-    includedCount,
-    minPlaying,
-    confirmedLabel,
+    ...base,
     teamsPhase: "ready",
     teamsMessage: "Teams ready",
     myTeamLabel: myTeam,
     showTeamLists: true,
     showProgress: false,
-    includeMaybePlayers,
     teamA: teams.teamA,
     teamB: teams.teamB,
+    stale: false,
   };
 }

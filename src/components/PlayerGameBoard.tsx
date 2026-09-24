@@ -13,6 +13,7 @@ import {
 } from "@/lib/firebase/data";
 import {
   ensureTeamsIntegrityApi,
+  regenerateTeamsApi,
   saveManualTeamsApi,
   setAttendanceAndSync,
   setGameNoGameApi,
@@ -234,22 +235,17 @@ export function PlayerGameBoard() {
     if (prev === status) return;
 
     const key = `${gId}_${playerId}`;
-    const affectsTeams = gId === teamsGameId;
     setError(null);
     setSavingKey(key);
     setGrid((cur) => ({
       ...cur,
       [gId]: { ...(cur[gId] ?? {}), [playerId]: status },
     }));
-    if (affectsTeams) {
-      setUpdatingTeams(true);
-      setTeams((cur) => (cur ? { ...cur, teamA: [], teamB: [] } : null));
-    }
 
     try {
       await setAttendanceAndSync(user, gId, playerId, status);
       await reload();
-      if (affectsTeams && teamsGameId) {
+      if (gId === teamsGameId && teamsGameId) {
         const t = await getGameTeams(getClientDb(), teamsGameId);
         setTeams(t);
         setIncludeMaybe(Boolean(t?.includeMaybePlayers));
@@ -262,15 +258,12 @@ export function PlayerGameBoard() {
       setError(formatUnknownError(e));
     } finally {
       setSavingKey(null);
-      if (affectsTeams) setUpdatingTeams(false);
     }
   }
 
   async function toggleIncludeMaybe(next: boolean) {
-    if (!user || !teamsGameId) return;
+    if (!user || !teamsGameId || !showAdminUI) return;
     setIncludeMaybe(next);
-    setUpdatingTeams(true);
-    setTeams((cur) => (cur ? { ...cur, teamA: [], teamB: [] } : null));
     setError(null);
     try {
       await setIncludeMaybeApi(user, teamsGameId, next);
@@ -279,6 +272,20 @@ export function PlayerGameBoard() {
       setIncludeMaybe(Boolean(t?.includeMaybePlayers));
     } catch (e) {
       setIncludeMaybe(!next);
+      setError(formatUnknownError(e));
+    }
+  }
+
+  async function generateTeams() {
+    if (!user || !teamsGameId || !showAdminUI) return;
+    setError(null);
+    setUpdatingTeams(true);
+    try {
+      await regenerateTeamsApi(user, teamsGameId);
+      const t = await getGameTeams(getClientDb(), teamsGameId);
+      setTeams(t);
+      setIncludeMaybe(Boolean(t?.includeMaybePlayers));
+    } catch (e) {
       setError(formatUnknownError(e));
     } finally {
       setUpdatingTeams(false);
@@ -435,6 +442,8 @@ export function PlayerGameBoard() {
                 isAdmin={showAdminUI}
                 onToggleIncludeMaybe={toggleIncludeMaybe}
                 onManualTeams={persistManualTeams}
+                onGenerate={generateTeams}
+                generating={updatingTeams}
               />
             ) : (
               <p className="teams-note text-slate-400">
@@ -590,6 +599,8 @@ export function PlayerGameBoard() {
                     isAdmin={showAdminUI}
                     onToggleIncludeMaybe={toggleIncludeMaybe}
                     onManualTeams={persistManualTeams}
+                    onGenerate={generateTeams}
+                    generating={updatingTeams}
                   />
                 ) : (
                   <p className="teams-note text-slate-400">
@@ -764,6 +775,8 @@ function TeamsBody({
   isAdmin,
   onToggleIncludeMaybe,
   onManualTeams,
+  onGenerate,
+  generating,
 }: {
   game: Game;
   view: PlayerGameViewModel;
@@ -775,6 +788,8 @@ function TeamsBody({
     teamA: TeamMemberPublic[],
     teamB: TeamMemberPublic[]
   ) => void;
+  onGenerate: () => void;
+  generating: boolean;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
 
@@ -804,33 +819,51 @@ function TeamsBody({
         {game.location}
       </p>
 
-      <label className="teams-include-maybe">
-        <input
-          type="checkbox"
-          checked={includeMaybe}
-          disabled={view.showProgress}
-          onChange={(e) => onToggleIncludeMaybe(e.target.checked)}
-        />
-        Include Maybe players
-      </label>
+      {isAdmin ? (
+        <label className="teams-include-maybe">
+          <input
+            type="checkbox"
+            checked={includeMaybe}
+            disabled={generating}
+            onChange={(e) => onToggleIncludeMaybe(e.target.checked)}
+          />
+          Include Maybe players
+        </label>
+      ) : null}
 
       <p className="teams-count">{view.confirmedLabel}</p>
-      {view.showProgress && (
+
+      {isAdmin ? (
+        <div className="teams-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={generating || view.teamsPhase === "insufficient"}
+            onClick={() => onGenerate()}
+          >
+            {generating ? "Working…" : "Generate Teams"}
+          </button>
+        </div>
+      ) : null}
+
+      {view.teamsPhase === "stale" ? (
+        <p className="teams-note teams-note-stale">{view.teamsMessage}</p>
+      ) : view.showProgress ? (
         <div className="teams-progress" aria-live="polite">
           <p className="teams-note">{view.teamsMessage}</p>
           <div className="teams-progress-track">
             <div className="teams-progress-bar" />
           </div>
         </div>
-      )}
-      {!view.showProgress && view.teamsMessage ? (
+      ) : view.teamsMessage ? (
         <p className="teams-note">{view.teamsMessage}</p>
       ) : null}
-      {view.myTeamLabel && (
+
+      {view.myTeamLabel && !view.stale ? (
         <p className="teams-you">
           You are playing for {view.myTeamLabel.toUpperCase()}
         </p>
-      )}
+      ) : null}
       {view.showTeamLists && (
         <div className="teams-columns">
           {(["A", "B"] as const).map((side) => {
