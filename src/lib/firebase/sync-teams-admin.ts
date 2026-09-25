@@ -9,9 +9,12 @@ import type {
   GameTeams,
   Player,
   PlayerEvaluation,
+  SimplePlayerEvaluation,
   AppSettings,
   TeamMemberPublic,
+  TeamRatingSystem,
 } from "../types";
+import { parseTeamRatingSystem, SIMPLE_RATING_KEYS } from "../types";
 import {
   DEFAULT_MIN_PLAYING_FOR_TEAMS,
   isIncludedForTeams,
@@ -30,6 +33,7 @@ import {
 } from "../team-eligibility";
 import {
   buildRatedEligible,
+  buildSimpleRatedEligible,
   computeBestBalancedSplit,
   MissingEvaluationError,
 } from "../team-generate";
@@ -42,12 +46,14 @@ function nowIso() {
 async function loadSettings(): Promise<{
   minPlaying: number;
   allowPlayersEditOthersAttendance: boolean;
+  teamRatingSystem: TeamRatingSystem;
 }> {
   const snap = await getAdminDb().collection("settings").doc("app").get();
   if (!snap.exists) {
     return {
       minPlaying: DEFAULT_MIN_PLAYING_FOR_TEAMS,
       allowPlayersEditOthersAttendance: true,
+      teamRatingSystem: "classic",
     };
   }
   const data = snap.data() as Partial<AppSettings>;
@@ -59,6 +65,7 @@ async function loadSettings(): Promise<{
         : DEFAULT_MIN_PLAYING_FOR_TEAMS,
     allowPlayersEditOthersAttendance:
       data.allowPlayersEditOthersAttendance !== false,
+    teamRatingSystem: parseTeamRatingSystem(data.teamRatingSystem),
   };
 }
 
@@ -391,12 +398,13 @@ export async function generateTeamsExplicit(input: {
     throw new Error("Generate Teams only applies to the nearest upcoming game");
   }
 
-  const [gameSnap, attendanceSnap, playersSnap, evalsSnap, teamsSnap, settings] =
+  const [gameSnap, attendanceSnap, playersSnap, evalsSnap, simpleEvalsSnap, teamsSnap, settings] =
     await Promise.all([
       gameRef.get(),
       db.collection("attendance").where("gameId", "==", input.gameId).get(),
       db.collection("players").get(),
       db.collection("playerEvaluations").get(),
+      db.collection("playerEvaluationsSimple").get(),
       teamsRef.get(),
       loadSettings(),
     ]);
@@ -417,6 +425,12 @@ export async function generateTeamsExplicit(input: {
     evalsSnap.docs.map((d) => {
       const ev = d.data() as PlayerEvaluation;
       return [ev.playerId, ev];
+    })
+  );
+  const simpleEvalMap = Object.fromEntries(
+    simpleEvalsSnap.docs.map((d) => {
+      const ev = d.data() as SimplePlayerEvaluation;
+      return [ev.playerId || d.id, ev];
     })
   );
 
@@ -446,14 +460,40 @@ export async function generateTeamsExplicit(input: {
       .map((a) => a.playerId)
   );
 
-  let rated;
+  const ratingSystem = settings.teamRatingSystem;
+  let teamA;
+  let teamB;
   try {
-    ({ rated } = buildRatedEligible({
-      eligibleIds,
-      players,
-      evalMap,
-      maybePlayerIds,
-    }));
+    if (ratingSystem === "simple") {
+      const { rated } = buildSimpleRatedEligible({
+        eligibleIds,
+        players,
+        evalMap: simpleEvalMap,
+        maybePlayerIds,
+      });
+      const best = computeBestBalancedSplit({
+        rated,
+        maybePlayerIds,
+        dimensionKeys: SIMPLE_RATING_KEYS,
+        // Simple keeps uncompensated Overall gap (Classic-only odd 20%).
+        oddTeamOverallCompensation: 0,
+      });
+      teamA = best.teamA;
+      teamB = best.teamB;
+    } else {
+      const { rated } = buildRatedEligible({
+        eligibleIds,
+        players,
+        evalMap,
+        maybePlayerIds,
+      });
+      const best = computeBestBalancedSplit({
+        rated,
+        maybePlayerIds,
+      });
+      teamA = best.teamA;
+      teamB = best.teamB;
+    }
   } catch (e) {
     if (e instanceof MissingEvaluationError) {
       throw Object.assign(e, { code: "missing_evaluation" });
@@ -461,17 +501,12 @@ export async function generateTeamsExplicit(input: {
     throw e;
   }
 
-  const best = computeBestBalancedSplit({
-    rated,
-    maybePlayerIds,
-  });
-
   const fingerprint = eligiblePoolFingerprint(eligibleIds);
   const now = nowIso();
   const payload: GameTeams = {
     gameId: input.gameId,
-    teamA: best.teamA,
-    teamB: best.teamB,
+    teamA,
+    teamB,
     published: false,
     publishedAt: null,
     updatedAt: now,
@@ -480,6 +515,7 @@ export async function generateTeamsExplicit(input: {
     includeMaybePlayers: includeMaybe,
     eligibleFingerprint: fingerprint,
     stale: false,
+    generatedWithRatingSystem: ratingSystem,
   };
   await teamsRef.set(payload);
   await gameRef.update({
@@ -498,8 +534,8 @@ export async function generateTeamsExplicit(input: {
       includeMaybePlayers: includeMaybe,
       writeTeams: true,
       clearTeams: false,
-      teamA: best.teamA,
-      teamB: best.teamB,
+      teamA,
+      teamB,
       markStale: false,
       manuallyAdjusted: false,
       keepPublished: false,

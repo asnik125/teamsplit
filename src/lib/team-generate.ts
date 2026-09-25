@@ -12,18 +12,28 @@ import type {
   PlayerEvaluation,
   PlayerRatings,
   RatedPlayer,
+  SimplePlayerEvaluation,
+  SimplePlayerRatings,
+  SimpleRatedPlayer,
   TeamMemberPublic,
 } from "./types";
-import { RATING_KEYS } from "./types";
+import { RATING_KEYS, SIMPLE_RATING_KEYS } from "./types";
 import { eligiblePoolFingerprint } from "./team-eligibility";
+import {
+  calculateSimpleOverall,
+  isCompleteSimpleRatings,
+} from "./simple-ratings";
 
 export class MissingEvaluationError extends Error {
   readonly playerIds: string[];
   readonly displayNames: string[];
-  constructor(players: { id: string; displayName: string }[]) {
+  constructor(
+    players: { id: string; displayName: string }[],
+    systemLabel: "Classic" | "Simple" = "Classic"
+  ) {
     const names = players.map((p) => p.displayName);
     super(
-      `Cannot skill-balance teams until evaluations exist for: ${names.join(", ")}`
+      `Cannot skill-balance teams (${systemLabel}) until evaluations exist for: ${names.join(", ")}`
     );
     this.name = "MissingEvaluationError";
     this.playerIds = players.map((p) => p.id);
@@ -32,12 +42,24 @@ export class MissingEvaluationError extends Error {
 }
 
 export interface BalancedSplitScore {
+  /**
+   * Primary Overall term used for lexicographic ranking.
+   * Even pools: abs(meanA − meanB).
+   * Odd Classic pools: abs(mean(smaller) − mean(larger) × (1 + CLASSIC_ODD_OVERALL_COMPENSATION)).
+   */
   overallGap: number;
   dimensionGapAvg: number;
   maxDimensionGap: number;
   /** Canonical partition key for deterministic tie-break */
   key: string;
 }
+
+/**
+ * Classic-only: when team sizes differ by 1, require the smaller side's mean Overall
+ * to beat the larger side's mean by this relative premium (20%).
+ * Even pools are unaffected. Simple generation must pass compensation 0.
+ */
+export const CLASSIC_ODD_OVERALL_COMPENSATION = 0.2;
 
 export interface BalancedTeamSplit {
   teamA: TeamMemberPublic[];
@@ -73,7 +95,7 @@ export function buildRatedEligible(input: {
     });
   }
   if (missing.length > 0) {
-    throw new MissingEvaluationError(missing);
+    throw new MissingEvaluationError(missing, "Classic");
   }
   // Deterministic order for enumeration
   rated.sort((a, b) => a.id.localeCompare(b.id));
@@ -111,14 +133,29 @@ function mean(values: number[]): number {
 export function scorePartition(
   idsA: string[],
   idsB: string[],
-  byId: Map<string, RatedPlayer>
+  byId: Map<string, { overall: number } & Record<string, number>>,
+  dimensionKeys: readonly string[] = RATING_KEYS,
+  oddOverallCompensation: number = 0
 ): BalancedSplitScore {
   const overallA = mean(idsA.map((id) => byId.get(id)!.overall));
   const overallB = mean(idsB.map((id) => byId.get(id)!.overall));
-  const overallGap = Math.abs(overallA - overallB);
+
+  let overallGap: number;
+  if (
+    oddOverallCompensation > 0 &&
+    idsA.length !== idsB.length
+  ) {
+    const meanSmall = idsA.length < idsB.length ? overallA : overallB;
+    const meanLarge = idsA.length < idsB.length ? overallB : overallA;
+    overallGap = Math.abs(
+      meanSmall - meanLarge * (1 + oddOverallCompensation)
+    );
+  } else {
+    overallGap = Math.abs(overallA - overallB);
+  }
 
   const dimGaps: number[] = [];
-  for (const dim of RATING_KEYS) {
+  for (const dim of dimensionKeys) {
     const meanA = mean(idsA.map((id) => Number(byId.get(id)![dim])));
     const meanB = mean(idsB.map((id) => Number(byId.get(id)![dim])));
     dimGaps.push(Math.abs(meanA - meanB));
@@ -184,17 +221,32 @@ export function enumerateBalancedPartitions(playerIds: string[]): string[][] {
 }
 
 /**
- * Single best skill-balanced split for the eligible rated pool.
+ * Single best skill-balanced split for a rated pool (Classic or Simple dims).
+ *
+ * Classic (default dims): odd pools use CLASSIC_ODD_OVERALL_COMPENSATION (20%).
+ * Simple: pass oddTeamOverallCompensation: 0 (or any non-Classic dimensionKeys
+ * defaults compensation to 0 so Simple behavior is unchanged).
  */
-export function computeBestBalancedSplit(input: {
-  rated: RatedPlayer[];
+export function computeBestBalancedSplit<
+  T extends { id: string; displayName: string; overall: number },
+>(input: {
+  rated: T[];
   maybePlayerIds: Set<string>;
+  dimensionKeys?: readonly string[];
+  /** Relative premium on the larger team's mean Overall when sizes differ. Classic default 0.2; Simple should pass 0. */
+  oddTeamOverallCompensation?: number;
 }): BalancedTeamSplit {
+  const dimensionKeys = input.dimensionKeys ?? RATING_KEYS;
+  const oddTeamOverallCompensation =
+    input.oddTeamOverallCompensation ??
+    (dimensionKeys === RATING_KEYS ? CLASSIC_ODD_OVERALL_COMPENSATION : 0);
   if (input.rated.length < 2) {
     throw new Error("At least 2 eligible players are required");
   }
 
-  const byId = new Map(input.rated.map((r) => [r.id, r]));
+  const byId = new Map(
+    input.rated.map((r) => [r.id, r as T & Record<string, unknown>])
+  );
   const ids = input.rated.map((r) => r.id);
   const sidesA = enumerateBalancedPartitions(ids);
   if (sidesA.length === 0) {
@@ -207,7 +259,13 @@ export function computeBestBalancedSplit(input: {
   for (const idsA of sidesA) {
     const setA = new Set(idsA);
     const idsB = ids.filter((id) => !setA.has(id));
-    const score = scorePartition(idsA, idsB, byId);
+    const score = scorePartition(
+      idsA,
+      idsB,
+      byId as Map<string, { overall: number } & Record<string, number>>,
+      dimensionKeys,
+      oddTeamOverallCompensation
+    );
     if (!bestScore || compareScores(score, bestScore) < 0) {
       bestScore = score;
       bestIdsA = idsA;
@@ -218,8 +276,7 @@ export function computeBestBalancedSplit(input: {
   const teamARated = input.rated.filter((r) => setA.has(r.id));
   const teamBRated = input.rated.filter((r) => !setA.has(r.id));
 
-  // Preserve display order by overall desc within each side (stable UX)
-  const byOverall = (a: RatedPlayer, b: RatedPlayer) =>
+  const byOverall = (a: T, b: T) =>
     b.overall - a.overall || a.id.localeCompare(b.id);
   teamARated.sort(byOverall);
   teamBRated.sort(byOverall);
@@ -236,6 +293,38 @@ export function computeBestBalancedSplit(input: {
   return { teamA, teamB, score: bestScore! };
 }
 
-export function fingerprintForRated(rated: RatedPlayer[]): string {
+export function buildSimpleRatedEligible(input: {
+  eligibleIds: string[];
+  players: Player[];
+  evalMap: Record<string, SimplePlayerEvaluation | undefined>;
+  maybePlayerIds: Set<string>;
+}): { rated: SimpleRatedPlayer[]; maybePlayerIds: Set<string> } {
+  const missing: Player[] = [];
+  const rated: SimpleRatedPlayer[] = [];
+  for (const id of input.eligibleIds) {
+    const pl = input.players.find((p) => p.id === id && p.active);
+    if (!pl) continue;
+    const ev = input.evalMap[id];
+    if (!ev || !isCompleteSimpleRatings(ev)) {
+      missing.push(pl);
+      continue;
+    }
+    const ratings = Object.fromEntries(
+      SIMPLE_RATING_KEYS.map((k) => [k, ev[k]])
+    ) as SimplePlayerRatings;
+    rated.push({
+      ...pl,
+      ...ratings,
+      overall: calculateSimpleOverall(ratings),
+    });
+  }
+  if (missing.length > 0) {
+    throw new MissingEvaluationError(missing, "Simple");
+  }
+  rated.sort((a, b) => a.id.localeCompare(b.id));
+  return { rated, maybePlayerIds: input.maybePlayerIds };
+}
+
+export function fingerprintForRated(rated: { id: string }[]): string {
   return eligiblePoolFingerprint(rated.map((r) => r.id));
 }
