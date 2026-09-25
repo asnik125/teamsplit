@@ -60,13 +60,13 @@ describe("No Game attendance", () => {
 
   it("4. Player cannot change attendance on No Game", () => {
     const g = game({ id: "g1", date: "2026-10-01", noGame: true });
-    expect(canEditAttendanceOnGame(g)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "player")).toBe(false);
   });
 
   it("5. Admin cannot change attendance on No Game", () => {
     // Lock is game-level — role does not bypass canEditAttendanceOnGame
     const g = game({ id: "g1", date: "2026-10-01", noGame: true });
-    expect(canEditAttendanceOnGame(g)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "admin")).toBe(false);
   });
 
   it("6. No Game remains visible in Attendance (still scheduled)", () => {
@@ -90,7 +90,7 @@ describe("No Game attendance", () => {
     expect(attendanceMapAfterNoGameChange(prev, false)).toEqual({});
 
     const reopened = game({ id: "g1", date: "2026-10-01", noGame: false });
-    expect(canEditAttendanceOnGame(reopened)).toBe(true);
+    expect(canEditAttendanceOnGame(reopened, "player")).toBe(true);
     expect(effectiveAttendanceStatus(reopened, undefined)).toBe("no_response");
   });
 
@@ -98,7 +98,7 @@ describe("No Game attendance", () => {
     const legacy = game({ id: "g1", date: "2026-10-01" });
     delete (legacy as { noGame?: boolean }).noGame;
     expect(gameHasNoGame(legacy as Game)).toBe(false);
-    expect(canEditAttendanceOnGame(legacy as Game)).toBe(true);
+    expect(canEditAttendanceOnGame(legacy as Game, "player")).toBe(true);
     expect(isPlayableGame(legacy as Game)).toBe(true);
     expect(effectiveAttendanceStatus(legacy as Game, "playing")).toBe(
       "playing"

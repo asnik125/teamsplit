@@ -21,6 +21,7 @@ import {
   formatAttendanceColumnDate,
   compareGamesByDateTime,
 } from "@/lib/schedule";
+import { canEditAttendanceOnGame } from "@/lib/no-game";
 import type { AttendanceStatus, Game, Player } from "@/lib/types";
 import { formatUnknownError } from "@/lib/errors";
 
@@ -54,7 +55,7 @@ type AttendanceGrid = Record<string, Record<string, AttendanceStatus>>;
 function AttendanceContent() {
   const { gameId: routeGameId } = useParams<{ gameId: string }>();
   const router = useRouter();
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   const [games, setGames] = useState<Game[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
   const [grid, setGrid] = useState<AttendanceGrid>({});
@@ -153,6 +154,11 @@ function AttendanceContent() {
     status: AttendanceStatus
   ) {
     if (!user) return;
+    const game = games.find((g) => g.id === gId);
+    if (!game || !canEditAttendanceOnGame(game, profile?.role ?? "admin")) {
+      setError("Attendance is locked for this game");
+      return;
+    }
     const key = `${gId}_${playerId}`;
     const prev = cellStatus(gId, playerId);
     if (prev === status) return;
@@ -192,15 +198,18 @@ function AttendanceContent() {
     const status = cellStatus(gId, player.id);
     const key = `${gId}_${player.id}`;
     const busy = savingKey === key;
+    const game = games.find((g) => g.id === gId);
+    const locked =
+      !game || !canEditAttendanceOnGame(game, profile?.role ?? "admin");
 
     return (
       <select
         aria-label={`${player.displayName} attendance`}
         className={`attendance-status ${statusClass(status)} ${
           compact ? "attendance-status-compact" : "attendance-status-row"
-        }`}
+        }${locked ? " attendance-badge-locked" : ""}`}
         value={status}
-        disabled={busy}
+        disabled={busy || locked}
         onChange={(e) =>
           changeStatus(gId, player.id, e.target.value as AttendanceStatus)
         }

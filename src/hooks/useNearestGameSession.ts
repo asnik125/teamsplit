@@ -52,6 +52,7 @@ export type AttendanceGrid = Record<string, Record<string, AttendanceStatus>>;
 export function useNearestGameSession() {
   const { user, profile, isAdmin, showAdminUI } = useAuth();
   const myPlayerId = profile?.playerId ?? null;
+  const viewerRole = profile?.role ?? null;
 
   const [games, setGames] = useState<Game[]>([]);
   const [players, setPlayers] = useState<Player[]>([]);
@@ -183,7 +184,7 @@ export function useNearestGameSession() {
   ) {
     if (!user || !canEditPlayer(playerId)) return;
     const game = games.find((g) => g.id === gId);
-    if (!game || !canEditAttendanceOnGame(game)) return;
+    if (!game || !canEditAttendanceOnGame(game, viewerRole)) return;
     const prev = cellStatus(gId, playerId);
     if (prev === status) return;
 
@@ -360,7 +361,8 @@ export function useNearestGameSession() {
     toggleNoGame,
     reload,
     gameHasNoGame,
-    canEditAttendanceOnGame,
+    canEditAttendanceOnGame: (game: Game) =>
+      canEditAttendanceOnGame(game, viewerRole),
   };
 }
 

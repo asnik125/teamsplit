@@ -23,6 +23,10 @@ import {
 import { activeEligiblePlayerIds } from "../player-lifecycle";
 import { nextUpcomingGame } from "../schedule";
 import {
+  canAdminOperateTeamsOnGame,
+  canEditAttendanceOnGame,
+} from "../no-game";
+import {
   areTeamsStale,
   eligiblePlayerIdsFromAttendance,
   eligiblePoolFingerprint,
@@ -82,13 +86,46 @@ export async function canUserEditPlayerAttendance(input: {
   return allowPlayersEditOthersAttendance;
 }
 
-async function loadNearestUpcomingGameId(): Promise<string | null> {
+async function loadScheduledGames(): Promise<Game[]> {
   const snap = await getAdminDb()
     .collection("games")
     .where("status", "==", "scheduled")
     .get();
-  const games = snap.docs.map((d) => d.data() as Game);
+  return snap.docs.map((d) => d.data() as Game);
+}
+
+async function loadNearestUpcomingGameId(): Promise<string | null> {
+  const games = await loadScheduledGames();
   return nextUpcomingGame(games)?.id ?? null;
+}
+
+/**
+ * Nearest upcoming game, or the in-progress game still inside the Admin
+ * post-kickoff repair window (through 22:00 America/Vancouver).
+ */
+async function assertAdminCanOperateTeamsOnGame(
+  gameId: string,
+  now: Date = new Date()
+): Promise<Game> {
+  const games = await loadScheduledGames();
+  const game = games.find((g) => g.id === gameId);
+  if (!game) {
+    const snap = await getAdminDb().collection("games").doc(gameId).get();
+    if (!snap.exists) throw new Error(`Game ${gameId} not found`);
+    const g = snap.data() as Game;
+    if (!canAdminOperateTeamsOnGame(g, [...games, g], now)) {
+      throw new Error(
+        "Team operations only apply to the nearest upcoming game (or tonight's game until 10:00 PM Vancouver)"
+      );
+    }
+    return g;
+  }
+  if (!canAdminOperateTeamsOnGame(game, games, now)) {
+    throw new Error(
+      "Team operations only apply to the nearest upcoming game (or tonight's game until 10:00 PM Vancouver)"
+    );
+  }
+  return game;
 }
 
 function emptyDecision(
@@ -174,8 +211,12 @@ export async function applyAttendanceAndSyncTeams(input: {
   playerId: string;
   status: AttendanceStatus;
   updatedBy: string | null;
+  /** Caller role — gates post-kickoff edits (Admin/Owner until 22:00 Vancouver). */
+  role?: string | null;
+  now?: Date;
 }): Promise<AttendanceSyncResult> {
   const db = getAdminDb();
+  const now = input.now ?? new Date();
   const gameRef = db.collection("games").doc(input.gameId);
   const attendanceRef = db
     .collection("attendance")
@@ -198,6 +239,11 @@ export async function applyAttendanceAndSyncTeams(input: {
   const game = gameSnap.data() as Game;
   if (Boolean(game.noGame)) {
     throw new Error("Attendance is locked: this date is marked No Game");
+  }
+  if (!canEditAttendanceOnGame(game, input.role ?? null, now)) {
+    throw new Error(
+      "Attendance is locked for this game (past kickoff or past 10:00 PM Vancouver)"
+    );
   }
 
   const previousStatus = attendanceSnap.exists
@@ -279,12 +325,7 @@ export async function setIncludeMaybePreference(input: {
   const gameRef = db.collection("games").doc(input.gameId);
   const teamsRef = db.collection("gameTeams").doc(input.gameId);
 
-  const nearestId = await loadNearestUpcomingGameId();
-  if (nearestId !== input.gameId) {
-    throw new Error(
-      "Include Maybe only applies to the nearest upcoming game"
-    );
-  }
+  await assertAdminCanOperateTeamsOnGame(input.gameId);
 
   const [gameSnap, attendanceSnap, playersSnap, teamsSnap, settings] =
     await Promise.all([
@@ -393,10 +434,7 @@ export async function generateTeamsExplicit(input: {
   const gameRef = db.collection("games").doc(input.gameId);
   const teamsRef = db.collection("gameTeams").doc(input.gameId);
 
-  const nearestId = await loadNearestUpcomingGameId();
-  if (nearestId !== input.gameId) {
-    throw new Error("Generate Teams only applies to the nearest upcoming game");
-  }
+  await assertAdminCanOperateTeamsOnGame(input.gameId);
 
   const [gameSnap, attendanceSnap, playersSnap, evalsSnap, simpleEvalsSnap, teamsSnap, settings] =
     await Promise.all([
@@ -650,10 +688,7 @@ export async function saveManualTeams(input: {
   teamB: TeamMemberPublic[];
   updatedBy: string | null;
 }): Promise<void> {
-  const nearestId = await loadNearestUpcomingGameId();
-  if (nearestId !== input.gameId) {
-    throw new Error("Manual team edits only apply to the nearest upcoming game");
-  }
+  await assertAdminCanOperateTeamsOnGame(input.gameId);
   if (teamSizeDiff(input.teamA, input.teamB) > 1) {
     throw new Error(
       `Unbalanced team sizes: ${input.teamA.length} vs ${input.teamB.length}`

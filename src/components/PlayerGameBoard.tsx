@@ -36,6 +36,7 @@ import {
   canEditAttendanceOnGame,
   effectiveAttendanceStatus,
   gameHasNoGame,
+  adminTeamsFocusGame,
 } from "@/lib/no-game";
 import type {
   AttendanceStatus,
@@ -169,7 +170,11 @@ export function PlayerGameBoard() {
     });
   }, [loaded, games]);
 
-  const teamsGame = useMemo(() => nextUpcomingGame(games), [games]);
+  const teamsGame = useMemo(
+    () =>
+      showAdminUI ? adminTeamsFocusGame(games) : nextUpcomingGame(games),
+    [games, showAdminUI]
+  );
   const teamsGameId = teamsGame?.id ?? null;
 
   // Teams always load for the nearest upcoming game — not the attendance column selection.
@@ -235,7 +240,7 @@ export function PlayerGameBoard() {
   ) {
     if (!user || !canEditPlayer(playerId)) return;
     const game = games.find((g) => g.id === gId);
-    if (!game || !canEditAttendanceOnGame(game)) return;
+    if (!game || !canEditAttendanceOnGame(game, profile?.role ?? null)) return;
     const prev = cellStatus(gId, playerId);
     if (prev === status) return;
 
@@ -440,6 +445,7 @@ export function PlayerGameBoard() {
               myPlayerId={myPlayerId}
               savingKey={savingKey}
               isAdmin={showAdminUI}
+              viewerRole={profile?.role ?? null}
               cellStatus={cellStatus}
               canEditPlayer={canEditPlayer}
               onSelectGame={setSelectedGameId}
@@ -555,7 +561,10 @@ export function PlayerGameBoard() {
                 {players.map((p) => {
                   const isMe = p.id === myPlayerId;
                   const status = cellStatus(selectedGame.id, p.id);
-                  const locked = !canEditAttendanceOnGame(selectedGame);
+                  const locked = !canEditAttendanceOnGame(
+                    selectedGame,
+                    profile?.role ?? null
+                  );
                   const editable = canEditPlayer(p.id) && !locked;
                   const busy = savingKey === `${selectedGame.id}_${p.id}`;
                   return (
@@ -653,6 +662,7 @@ function AttendanceTable({
   myPlayerId,
   savingKey,
   isAdmin,
+  viewerRole,
   cellStatus,
   canEditPlayer,
   onSelectGame,
@@ -665,6 +675,7 @@ function AttendanceTable({
   myPlayerId: string | null;
   savingKey: string | null;
   isAdmin: boolean;
+  viewerRole: string | null;
   cellStatus: (gId: string, playerId: string) => AttendanceStatus;
   canEditPlayer: (playerId: string) => boolean;
   onSelectGame: (id: string) => void;
@@ -748,7 +759,7 @@ function AttendanceTable({
               {games.map((g) => {
                 const status = cellStatus(g.id, p.id);
                 const busy = savingKey === `${g.id}_${p.id}`;
-                const locked = !canEditAttendanceOnGame(g);
+                const locked = !canEditAttendanceOnGame(g, viewerRole);
                 const editable = canEditPlayer(p.id) && !locked;
                 return (
                   <td

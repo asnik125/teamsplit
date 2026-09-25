@@ -276,7 +276,9 @@ export function gamesForSeason(games: Game[], seasonId: string): Game[] {
 }
 
 /** Local start datetime ms for a game (date + startTime) in America/Vancouver. */
-export function gameStartMs(game: Game): number {
+export function gameStartMs(
+  game: Pick<Game, "date" | "startTime">
+): number {
   return vancouverLocalToUtc(
     game.date,
     game.startTime || "00:00",
@@ -285,12 +287,17 @@ export function gameStartMs(game: Game): number {
 }
 
 /** True while the game's local start datetime is still in the future. */
-export function gameHasNotStarted(game: Game, now = new Date()): boolean {
+export function gameHasNotStarted(
+  game: Pick<Game, "date" | "startTime">,
+  now = new Date()
+): boolean {
   return gameStartMs(game) > now.getTime();
 }
 
 /** True when the weekly slot is an active game (not cancelled, not No Game). */
-export function isPlayableGame(game: Game): boolean {
+export function isPlayableGame(
+  game: Pick<Game, "status" | "noGame">
+): boolean {
   return game.status === "scheduled" && !Boolean(game.noGame);
 }
 
@@ -298,11 +305,11 @@ export function isPlayableGame(game: Game): boolean {
  * Nearest upcoming scheduled game that has not started yet and is not No Game.
  * Teams panel always follows this game.
  */
-export function nextUpcomingGame(games: Game[], now = new Date()): Game | null {
+export function nextUpcomingGame<
+  T extends Pick<Game, "id" | "date" | "startTime" | "status" | "noGame">,
+>(games: T[], now = new Date()): T | null {
   const upcoming = games
-    .filter(
-      (g) => isPlayableGame(g) && gameHasNotStarted(g, now)
-    )
+    .filter((g) => isPlayableGame(g) && gameHasNotStarted(g, now))
     .sort((a, b) => {
       const byDate = a.date.localeCompare(b.date);
       if (byDate !== 0) return byDate;

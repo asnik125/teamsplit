@@ -84,6 +84,7 @@ export async function POST(req: NextRequest) {
       playerId,
       status,
       updatedBy: uid,
+      role: profile.role,
     });
     return NextResponse.json({
       ok: true,
@@ -98,7 +99,7 @@ export async function POST(req: NextRequest) {
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Sync failed";
-    if (msg.includes("No Game")) {
+    if (msg.includes("No Game") || msg.includes("Attendance is locked")) {
       return NextResponse.json({ error: msg }, { status: 403 });
     }
     return NextResponse.json({ error: msg }, { status: 500 });
