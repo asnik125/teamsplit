@@ -22,7 +22,7 @@ import {
   seasonIdForDate,
   splitUpcomingPast,
 } from "@/lib/schedule";
-import type { Game } from "@/lib/types";
+import type { Game, TeamRatingSystem } from "@/lib/types";
 import { formatUnknownError } from "@/lib/errors";
 import { DEFAULT_MIN_PLAYING_FOR_TEAMS } from "@/lib/team-sync";
 
@@ -66,6 +66,8 @@ export function AdminGamesContent() {
     String(DEFAULT_MIN_PLAYING_FOR_TEAMS)
   );
   const [allowEditOthers, setAllowEditOthers] = useState(true);
+  const [teamRatingSystem, setTeamRatingSystem] =
+    useState<TeamRatingSystem>("classic");
   const editFormRef = useRef<HTMLFormElement | null>(null);
   const dateInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -79,6 +81,7 @@ export function AdminGamesContent() {
     setMinPlaying(settings.minPlayingForTeams);
     setMinPlayingDraft(String(settings.minPlayingForTeams));
     setAllowEditOthers(settings.allowPlayersEditOthersAttendance);
+    setTeamRatingSystem(settings.teamRatingSystem);
   }
 
   useEffect(() => {
@@ -244,6 +247,7 @@ export function AdminGamesContent() {
     await saveAppSettings(getClientDb(), {
       minPlayingForTeams: value,
       allowPlayersEditOthersAttendance: allowEditOthers,
+      teamRatingSystem,
       updatedAt: new Date().toISOString(),
       updatedBy: user.uid,
     });
@@ -263,6 +267,7 @@ export function AdminGamesContent() {
     await saveAppSettings(getClientDb(), {
       minPlayingForTeams: minPlaying,
       allowPlayersEditOthersAttendance: next,
+      teamRatingSystem,
       updatedAt: new Date().toISOString(),
       updatedBy: user.uid,
     });

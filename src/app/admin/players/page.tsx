@@ -14,14 +14,14 @@ export default function AdminPlayersPage() {
         desktop={
           <>
             <AppNav />
-            <PlayersAdminContent />
+            <PlayersAdminContent enableRatingModelUi />
           </>
         }
         mobilePlayer={<MobilePlayerApp />}
         mobileAdmin={
           <MobileAdminApp
             initialTab="players"
-            playersContent={<PlayersAdminContent />}
+            playersContent={<PlayersAdminContent enableRatingModelUi={false} />}
           />
         }
       />

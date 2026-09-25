@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { RequireAuth } from "@/components/RequireAuth";
@@ -11,9 +11,11 @@ import { getClientDb } from "@/lib/firebase/client";
 import {
   getEvaluation,
   getPlayer,
+  getSimpleEvaluation,
   getUserProfile,
   listEvaluations,
   listPlayers,
+  upsertSimpleEvaluation,
 } from "@/lib/firebase/data";
 import { deletePlayerApi, setUserRoleApi } from "@/lib/firebase/role-api";
 import {
@@ -23,11 +25,27 @@ import {
   formatOneDecimal,
   formatSignedOneDecimal,
 } from "@/lib/balance-metrics";
+import {
+  calculateSimpleOverall,
+  emptySimpleRatingsDraft,
+  isCompleteSimpleRatings,
+} from "@/lib/simple-ratings";
 import { roleLabel } from "@/lib/roles";
 import { LAST_ADMIN_MESSAGE } from "@/lib/role-management";
 import { formatUnknownError } from "@/lib/errors";
-import type { Player, PlayerEvaluation, UserProfile, UserRole } from "@/lib/types";
-import { RATING_KEYS } from "@/lib/types";
+import type {
+  Player,
+  PlayerEvaluation,
+  SimplePlayerEvaluation,
+  SimplePlayerRatings,
+  UserProfile,
+  UserRole,
+} from "@/lib/types";
+import {
+  RATING_KEYS,
+  SIMPLE_RATING_KEYS,
+  SIMPLE_RATING_LABELS,
+} from "@/lib/types";
 
 function PlayerDetailContent() {
   const { playerId: rawId } = useParams<{ playerId: string }>();
@@ -36,6 +54,15 @@ function PlayerDetailContent() {
   const { user, refreshProfile } = useAuth();
   const [player, setPlayer] = useState<Player | null>(null);
   const [evaluation, setEvaluation] = useState<PlayerEvaluation | null>(null);
+  const [simpleEvaluation, setSimpleEvaluation] =
+    useState<SimplePlayerEvaluation | null>(null);
+  const [ratingsMode, setRatingsMode] = useState<"classic" | "simple">(
+    "classic"
+  );
+  const [simpleDraft, setSimpleDraft] = useState<SimplePlayerRatings>(
+    emptySimpleRatingsDraft()
+  );
+  const [simpleBusy, setSimpleBusy] = useState(false);
   const [allPlayers, setAllPlayers] = useState<Player[]>([]);
   const [allEvals, setAllEvals] = useState<
     Record<string, PlayerEvaluation | null>
@@ -50,9 +77,10 @@ function PlayerDetailContent() {
 
   async function reload() {
     const db = getClientDb();
-    const [p, e, players, evals] = await Promise.all([
+    const [p, e, s, players, evals] = await Promise.all([
       getPlayer(db, playerId),
       getEvaluation(db, playerId),
+      getSimpleEvaluation(db, playerId),
       listPlayers(db),
       listEvaluations(db),
     ]);
@@ -64,6 +92,16 @@ function PlayerDetailContent() {
     setNotFound(false);
     setPlayer(p);
     setEvaluation(e);
+    setSimpleEvaluation(s);
+    if (s && isCompleteSimpleRatings(s)) {
+      setSimpleDraft(
+        Object.fromEntries(
+          SIMPLE_RATING_KEYS.map((k) => [k, s[k]])
+        ) as SimplePlayerRatings
+      );
+    } else {
+      setSimpleDraft(emptySimpleRatingsDraft());
+    }
     setAllPlayers(players);
     setAllEvals(Object.fromEntries(evals.map((x) => [x.playerId, x])));
     if (p.linkedUid) {
@@ -142,6 +180,28 @@ function PlayerDetailContent() {
     }
   }
 
+  async function onSaveSimple(e: FormEvent) {
+    e.preventDefault();
+    if (!user || !player) return;
+    setSimpleBusy(true);
+    setRoleError(null);
+    setRoleMessage(null);
+    try {
+      await upsertSimpleEvaluation(
+        getClientDb(),
+        player.id,
+        simpleDraft,
+        user.uid
+      );
+      setRoleMessage("Simple ratings saved.");
+      await reload();
+    } catch (err) {
+      setRoleError(formatUnknownError(err));
+    } finally {
+      setSimpleBusy(false);
+    }
+  }
+
   if (notFound) {
     return (
       <>
@@ -171,6 +231,21 @@ function PlayerDetailContent() {
       </Link>
       <PageHeading>Player — {player.displayName}</PageHeading>
       <p className="page-heading-sub">{player.email || "No email"}</p>
+
+      {/* Desktop-only: view/edit which rating system is shown. Mobile keeps Classic. */}
+      <label className="mt-4 hidden flex-wrap items-center gap-2 text-sm md:flex">
+        <span className="text-slate-400">View/Edit ratings</span>
+        <select
+          className="input w-auto"
+          value={ratingsMode}
+          onChange={(e) =>
+            setRatingsMode(e.target.value === "simple" ? "simple" : "classic")
+          }
+        >
+          <option value="classic">Classic</option>
+          <option value="simple">Simple</option>
+        </select>
+      </label>
 
       {linkedProfile ? (
         <div className="card mt-4 space-y-3">
@@ -209,6 +284,8 @@ function PlayerDetailContent() {
         </div>
       )}
 
+      {/* Classic block: always on mobile; on desktop when Classic selected */}
+      <div className={ratingsMode === "simple" ? "md:hidden" : undefined}>
       {evaluation && metrics ? (
         <>
           <div className="card mt-4">
@@ -300,6 +377,60 @@ function PlayerDetailContent() {
           exist (missing data is not filled with defaults).
         </p>
       )}
+      </div>
+
+      {/* Simple editor: desktop only */}
+      {ratingsMode === "simple" ? (
+        <form
+          onSubmit={onSaveSimple}
+          className="card mt-4 hidden space-y-4 md:block"
+        >
+          <h3 className="font-semibold">Simple ratings (1–5)</h3>
+          <p className="text-xs text-slate-500">
+            Independent of Classic. Missing Simple ratings block Generate when
+            Team rating system is Simple.
+          </p>
+          {!simpleEvaluation ? (
+            <p className="text-sm text-amber-300">
+              No Simple evaluation yet — enter values and save.
+            </p>
+          ) : null}
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+            {SIMPLE_RATING_KEYS.map((key) => (
+              <label key={key} className="text-sm">
+                <span className="label">{SIMPLE_RATING_LABELS[key]}</span>
+                <select
+                  className="input"
+                  value={simpleDraft[key]}
+                  onChange={(e) =>
+                    setSimpleDraft((r) => ({
+                      ...r,
+                      [key]: Number(e.target.value),
+                    }))
+                  }
+                >
+                  {Array.from({ length: 5 }, (_, i) => i + 1).map((n) => (
+                    <option key={n} value={n}>
+                      {n}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ))}
+          </div>
+          <p className="text-sm text-slate-400">
+            Simple Overall:{" "}
+            <strong>{calculateSimpleOverall(simpleDraft).toFixed(1)}</strong>
+          </p>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={simpleBusy}
+          >
+            {simpleBusy ? "Saving…" : "Save Simple ratings"}
+          </button>
+        </form>
+      ) : null}
 
       <div className="card mt-4 space-y-3 border border-red-900/50">
         <p className="font-semibold text-red-300">Danger zone</p>

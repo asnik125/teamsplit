@@ -10,6 +10,7 @@ import {
   listGames,
   listPlayers,
   nextUpcomingGame,
+  saveAppSettings,
 } from "@/lib/firebase/data";
 import {
   ensureTeamsIntegrityApi,
@@ -42,6 +43,7 @@ import type {
   GameTeams,
   Player,
   TeamMemberPublic,
+  TeamRatingSystem,
 } from "@/lib/types";
 import { formatUnknownError } from "@/lib/errors";
 import { moveMemberKeepingSizeBalance } from "@/lib/balancer";
@@ -97,6 +99,8 @@ export function PlayerGameBoard() {
   const [allowEditOthers, setAllowEditOthers] = useState(true);
   const [updatingTeams, setUpdatingTeams] = useState(false);
   const [includeMaybe, setIncludeMaybe] = useState(false);
+  const [teamRatingSystem, setTeamRatingSystem] =
+    useState<TeamRatingSystem>("classic");
 
   const canEditPlayer = useCallback(
     (playerId: string) => {
@@ -117,6 +121,7 @@ export function PlayerGameBoard() {
     ]);
     setMinPlaying(settings.minPlayingForTeams);
     setAllowEditOthers(settings.allowPlayersEditOthersAttendance);
+    setTeamRatingSystem(settings.teamRatingSystem);
 
     const scheduled = allGames
       .filter((g) => g.status === "scheduled")
@@ -272,6 +277,25 @@ export function PlayerGameBoard() {
       setIncludeMaybe(Boolean(t?.includeMaybePlayers));
     } catch (e) {
       setIncludeMaybe(!next);
+      setError(formatUnknownError(e));
+    }
+  }
+
+  async function changeTeamRatingSystem(next: TeamRatingSystem) {
+    if (!user || !showAdminUI) return;
+    const prev = teamRatingSystem;
+    setTeamRatingSystem(next);
+    setError(null);
+    try {
+      await saveAppSettings(getClientDb(), {
+        minPlayingForTeams: minPlaying,
+        allowPlayersEditOthersAttendance: allowEditOthers,
+        teamRatingSystem: next,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user.uid,
+      });
+    } catch (e) {
+      setTeamRatingSystem(prev);
       setError(formatUnknownError(e));
     }
   }
@@ -440,6 +464,9 @@ export function PlayerGameBoard() {
                 myPlayerId={myPlayerId}
                 includeMaybe={includeMaybe}
                 isAdmin={showAdminUI}
+                showTeamRatingSystem={showAdminUI}
+                teamRatingSystem={teamRatingSystem}
+                onTeamRatingSystemChange={changeTeamRatingSystem}
                 onToggleIncludeMaybe={toggleIncludeMaybe}
                 onManualTeams={persistManualTeams}
                 onGenerate={generateTeams}
@@ -597,6 +624,9 @@ export function PlayerGameBoard() {
                     myPlayerId={myPlayerId}
                     includeMaybe={includeMaybe}
                     isAdmin={showAdminUI}
+                    showTeamRatingSystem={false}
+                    teamRatingSystem={teamRatingSystem}
+                    onTeamRatingSystemChange={changeTeamRatingSystem}
                     onToggleIncludeMaybe={toggleIncludeMaybe}
                     onManualTeams={persistManualTeams}
                     onGenerate={generateTeams}
@@ -773,6 +803,9 @@ function TeamsBody({
   myPlayerId,
   includeMaybe,
   isAdmin,
+  showTeamRatingSystem,
+  teamRatingSystem,
+  onTeamRatingSystemChange,
   onToggleIncludeMaybe,
   onManualTeams,
   onGenerate,
@@ -783,6 +816,9 @@ function TeamsBody({
   myPlayerId: string | null;
   includeMaybe: boolean;
   isAdmin: boolean;
+  showTeamRatingSystem: boolean;
+  teamRatingSystem: TeamRatingSystem;
+  onTeamRatingSystemChange: (next: TeamRatingSystem) => void;
   onToggleIncludeMaybe: (next: boolean) => void;
   onManualTeams: (
     teamA: TeamMemberPublic[],
@@ -828,6 +864,25 @@ function TeamsBody({
             onChange={(e) => onToggleIncludeMaybe(e.target.checked)}
           />
           Include Maybe players
+        </label>
+      ) : null}
+
+      {isAdmin && showTeamRatingSystem ? (
+        <label className="teams-include-maybe">
+          <span className="mr-2">Team rating system</span>
+          <select
+            className="input"
+            value={teamRatingSystem}
+            disabled={generating}
+            onChange={(e) =>
+              onTeamRatingSystemChange(
+                e.target.value === "simple" ? "simple" : "classic"
+              )
+            }
+          >
+            <option value="classic">Classic</option>
+            <option value="simple">Simple</option>
+          </select>
         </label>
       ) : null}
 

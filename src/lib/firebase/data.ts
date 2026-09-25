@@ -19,10 +19,16 @@ import type {
   Player,
   PlayerEvaluation,
   PlayerRatings,
+  SimplePlayerEvaluation,
+  SimplePlayerRatings,
   UserProfile,
   AppSettings,
 } from "../types";
-import { RATING_KEYS, sanitizeTeamMembers } from "../types";
+import {
+  RATING_KEYS,
+  sanitizeTeamMembers,
+  parseTeamRatingSystem,
+} from "../types";
 import { DEFAULT_MIN_PLAYING_FOR_TEAMS } from "../team-sync";
 import {
   nextUpcomingGame as nextUpcomingGameFromSchedule,
@@ -34,6 +40,7 @@ export const COLLECTIONS = {
   users: "users",
   players: "players",
   playerEvaluations: "playerEvaluations",
+  playerEvaluationsSimple: "playerEvaluationsSimple",
   games: "games",
   gameTeams: "gameTeams",
   settings: "settings",
@@ -45,6 +52,7 @@ export function defaultAppSettings(): AppSettings {
   return {
     minPlayingForTeams: DEFAULT_MIN_PLAYING_FOR_TEAMS,
     allowPlayersEditOthersAttendance: true,
+    teamRatingSystem: "classic",
     updatedAt: new Date(0).toISOString(),
     updatedBy: null,
   };
@@ -62,6 +70,7 @@ export async function getAppSettings(db: Firestore): Promise<AppSettings> {
         : DEFAULT_MIN_PLAYING_FOR_TEAMS,
     allowPlayersEditOthersAttendance:
       data.allowPlayersEditOthersAttendance !== false,
+    teamRatingSystem: parseTeamRatingSystem(data.teamRatingSystem),
     updatedAt: data.updatedAt ?? defaultAppSettings().updatedAt,
     updatedBy: data.updatedBy ?? null,
   };
@@ -143,6 +152,44 @@ export function emptyRatings(defaultValue = 6): PlayerRatings {
   return Object.fromEntries(
     RATING_KEYS.map((k) => [k, defaultValue])
   ) as PlayerRatings;
+}
+
+export async function getSimpleEvaluation(
+  db: Firestore,
+  playerId: string
+): Promise<SimplePlayerEvaluation | null> {
+  const snap = await getDoc(
+    doc(db, COLLECTIONS.playerEvaluationsSimple, playerId)
+  );
+  if (!snap.exists()) return null;
+  return snap.data() as SimplePlayerEvaluation;
+}
+
+export async function listSimpleEvaluations(
+  db: Firestore
+): Promise<SimplePlayerEvaluation[]> {
+  const snap = await getDocs(
+    collection(db, COLLECTIONS.playerEvaluationsSimple)
+  );
+  return snap.docs.map((d) => d.data() as SimplePlayerEvaluation);
+}
+
+export async function upsertSimpleEvaluation(
+  db: Firestore,
+  playerId: string,
+  ratings: SimplePlayerRatings,
+  updatedBy: string | null
+): Promise<void> {
+  const payload: SimplePlayerEvaluation = {
+    playerId,
+    ...ratings,
+    updatedAt: nowIso(),
+    updatedBy,
+  };
+  await setDoc(
+    doc(db, COLLECTIONS.playerEvaluationsSimple, playerId),
+    payload
+  );
 }
 
 function normalizeGame(id: string, data: Partial<Game>): Game {

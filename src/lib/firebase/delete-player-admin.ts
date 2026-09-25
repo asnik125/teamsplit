@@ -116,6 +116,14 @@ export async function deletePlayerAdmin(input: {
     await evalRef.delete();
   }
 
+  const simpleEvalRef = db
+    .collection("playerEvaluationsSimple")
+    .doc(input.playerId);
+  const simpleSnap = await simpleEvalRef.get();
+  if (simpleSnap.exists) {
+    await simpleEvalRef.delete();
+  }
+
   await playerRef.delete();
 
   let deletedUserProfile = false;

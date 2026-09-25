@@ -8,11 +8,13 @@ import { AppNav } from "@/components/AppNav";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
 import {
+  getAppSettings,
   getGame,
   getGameTeams,
   listAttendanceForGame,
   listEvaluations,
   listPlayers,
+  saveAppSettings,
   saveGameTeams,
   upsertGame,
 } from "@/lib/firebase/data";
@@ -33,6 +35,7 @@ import type {
   PlayerEvaluation,
   PlayerRatings,
   RatedPlayer,
+  TeamRatingSystem,
 } from "@/lib/types";
 import { RATING_KEYS } from "@/lib/types";
 import { formatUnknownError } from "@/lib/errors";
@@ -69,17 +72,25 @@ function TeamBuilderContent() {
   const [error, setError] = useState<string | null>(null);
   const [needsRepublish, setNeedsRepublish] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [teamRatingSystem, setTeamRatingSystem] =
+    useState<TeamRatingSystem>("classic");
+  const [allowEditOthers, setAllowEditOthers] = useState(true);
+  const [minPlaying, setMinPlaying] = useState(DEFAULT_MIN_PLAYING_FOR_TEAMS);
 
   const reloadMeta = useCallback(async () => {
     const db = getClientDb();
-    const [g, p, e, attendance, teams] = await Promise.all([
+    const [g, p, e, attendance, teams, settings] = await Promise.all([
       getGame(db, gameId),
       listPlayers(db),
       listEvaluations(db),
       listAttendanceForGame(db, gameId),
       getGameTeams(db, gameId),
+      getAppSettings(db),
     ]);
     setGame(g);
+    setTeamRatingSystem(settings.teamRatingSystem);
+    setAllowEditOthers(settings.allowPlayersEditOthersAttendance);
+    setMinPlaying(settings.minPlayingForTeams);
     const active = p.filter((x) => x.active);
     setPlayers(active);
     setEvals(Object.fromEntries(e.map((x) => [x.playerId, x])));
@@ -138,6 +149,10 @@ function TeamBuilderContent() {
   function generate() {
     setError(null);
     setMessage(null);
+    if (teamRatingSystem === "simple") {
+      void regenerateFromAttendance();
+      return;
+    }
     const pool = ratedPool.filter((p) => selected.has(p.id));
     if (pool.length < 2) {
       setError("Select at least 2 Playing participants to generate teams.");
@@ -259,6 +274,28 @@ function TeamBuilderContent() {
     await saveGameTeams(getClientDb(), payload);
     setPublished(false);
     setMessage("Teams unpublished.");
+  }
+
+  async function changeTeamRatingSystem(next: TeamRatingSystem) {
+    if (!user) return;
+    const prev = teamRatingSystem;
+    setTeamRatingSystem(next);
+    setError(null);
+    try {
+      await saveAppSettings(getClientDb(), {
+        minPlayingForTeams: minPlaying,
+        allowPlayersEditOthersAttendance: allowEditOthers,
+        teamRatingSystem: next,
+        updatedAt: new Date().toISOString(),
+        updatedBy: user.uid,
+      });
+      setMessage(
+        `Team rating system set to ${next === "simple" ? "Simple" : "Classic"} (does not regenerate teams).`
+      );
+    } catch (e) {
+      setTeamRatingSystem(prev);
+      setError(formatUnknownError(e));
+    }
   }
 
   async function regenerateFromAttendance() {
@@ -383,6 +420,24 @@ function TeamBuilderContent() {
               </span>
             </label>
           ))}
+        </div>
+        <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="text-slate-400">Team rating system</span>
+            <select
+              className="input w-auto"
+              value={teamRatingSystem}
+              disabled={busy}
+              onChange={(e) =>
+                changeTeamRatingSystem(
+                  e.target.value === "simple" ? "simple" : "classic"
+                )
+              }
+            >
+              <option value="classic">Classic</option>
+              <option value="simple">Simple</option>
+            </select>
+          </label>
         </div>
         <div className="mt-4 flex flex-wrap gap-2">
           <button type="button" className="btn btn-primary" onClick={generate}>

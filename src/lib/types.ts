@@ -26,6 +26,43 @@ export type RatingKey = (typeof RATING_KEYS)[number];
 
 export type PlayerRatings = Record<RatingKey, number>;
 
+/** Experimental second evaluation model (1–5). Independent of Classic. */
+export const SIMPLE_RATING_KEYS = [
+  "speed",
+  "physical",
+  "ballControl",
+  "passing",
+  "attack",
+  "defense",
+  "gameIq",
+  "impact",
+] as const;
+
+export type SimpleRatingKey = (typeof SIMPLE_RATING_KEYS)[number];
+
+export type SimplePlayerRatings = Record<SimpleRatingKey, number>;
+
+/** Which model Generate Teams uses (global Admin preference). */
+export type TeamRatingSystem = "classic" | "simple";
+
+export const TEAM_RATING_SYSTEMS: TeamRatingSystem[] = ["classic", "simple"];
+
+export function parseTeamRatingSystem(raw: unknown): TeamRatingSystem {
+  return raw === "simple" ? "simple" : "classic";
+}
+
+/** Display labels for Simple rating fields */
+export const SIMPLE_RATING_LABELS: Record<SimpleRatingKey, string> = {
+  speed: "Speed",
+  physical: "Physical",
+  ballControl: "Ball Control",
+  passing: "Passing",
+  attack: "Attack",
+  defense: "Defense",
+  gameIq: "Game IQ",
+  impact: "Impact",
+};
+
 export interface UserProfile {
   uid: string;
   playerId: string | null;
@@ -49,6 +86,13 @@ export interface Player {
 }
 
 export interface PlayerEvaluation extends PlayerRatings {
+  playerId: string;
+  updatedAt: string;
+  updatedBy: string | null;
+}
+
+/** Independent Simple evaluation (1–5). Never derived from Classic. */
+export interface SimplePlayerEvaluation extends SimplePlayerRatings {
   playerId: string;
   updatedAt: string;
   updatedBy: string | null;
@@ -97,6 +141,11 @@ export interface AppSettings {
   minPlayingForTeams: number;
   /** Default ON — players may edit anyone's attendance */
   allowPlayersEditOthersAttendance: boolean;
+  /**
+   * Which evaluation model Generate Teams uses app-wide.
+   * Missing/undefined → "classic". Changing this never regenerates teams.
+   */
+  teamRatingSystem: TeamRatingSystem;
   updatedAt: string;
   updatedBy: string | null;
 }
@@ -160,6 +209,11 @@ export interface GameTeams {
   eligibleFingerprint?: string | null;
   /** Explicit stale flag (also derived from fingerprint mismatch). */
   stale?: boolean;
+  /**
+   * Diagnostic only: which model produced this composition on last Generate.
+   * Not shown to Players or mobile Admin.
+   */
+  generatedWithRatingSystem?: TeamRatingSystem | null;
 }
 
 /** @deprecated Legacy multi-alternative shape — no longer written. */
@@ -170,6 +224,11 @@ export interface TeamCompositionAlternative {
 }
 
 export interface RatedPlayer extends Player, PlayerRatings {
+  overall: number;
+}
+
+/** Rated player for Simple-model Generate (8 dims, overall = mean). */
+export interface SimpleRatedPlayer extends Player, SimplePlayerRatings {
   overall: number;
 }
 
