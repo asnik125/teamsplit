@@ -14,7 +14,12 @@ import {
   sanitizeEmailError,
   sendResendEmail,
 } from "./resend-client";
-import { buildDueSlots, shouldSendGameOffThreshold } from "./schedule";
+import {
+  buildDueSlots,
+  routineReminderSuppressed,
+  shouldSendGameOffThreshold,
+  type ScheduledNotificationSlot,
+} from "./schedule";
 import {
   claimDispatch,
   claimSendSlot,
@@ -53,6 +58,14 @@ export interface ProcessNotificationsResult {
   }>;
 }
 
+function gameFromDoc(docId: string, data: Partial<Game>): Game {
+  return {
+    ...(data as Game),
+    id: docId,
+    noGame: Boolean(data.noGame),
+  };
+}
+
 async function loadMinPlaying(): Promise<number> {
   const snap = await getAdminDb().collection("settings").doc("app").get();
   if (!snap.exists) return DEFAULT_MIN_PLAYING_FOR_TEAMS;
@@ -76,7 +89,9 @@ export async function processDueNotifications(
     db.collection("players").get(),
   ]);
 
-  const games = gamesSnap.docs.map((d) => d.data() as Game);
+  const games = gamesSnap.docs.map((d) =>
+    gameFromDoc(d.id, d.data() as Partial<Game>)
+  );
   const users = usersSnap.docs.map((d) => d.data() as UserProfile);
   const players = playersSnap.docs.map((d) => d.data() as Player);
 
@@ -93,174 +108,245 @@ export async function processDueNotifications(
   const runs: ProcessNotificationsResult["runs"] = [];
 
   for (const slot of slots) {
-    const nowIso = now.toISOString();
-
-    if (options.forceRedispatch) {
-      await resetNotificationDedupeState({
-        gameId: slot.gameId,
-        type: slot.notificationType,
-      });
-    }
-
-    // Automatic Game OFF: evaluate Playing count before claiming so a
-    // sufficient roster does not lock the dispatch (and never sends ON).
-    let attendance: AttendanceRecord[] = [];
-    let playingCount = 0;
-    if (slot.notificationType === "final_status") {
-      const attendanceSnap = await db
-        .collection("attendance")
-        .where("gameId", "==", slot.gameId)
-        .get();
-      attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
-      playingCount = countPlaying(attendance);
-      if (
-        !shouldSendGameOffThreshold({
-          playingCount,
-          minPlaying,
-        })
-      ) {
-        continue;
-      }
-    }
-
-    const claimed = await claimDispatch({
-      gameId: slot.gameId,
-      type: slot.notificationType,
-      nowIso,
-      force: false,
-    });
-    if (!claimed) continue;
-
-    if (slot.notificationType !== "final_status") {
-      const attendanceSnap = await db
-        .collection("attendance")
-        .where("gameId", "==", slot.gameId)
-        .get();
-      attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
-      playingCount = countPlaying(attendance);
-    }
-
-    const { recipients, skipped } = resolveRecipients({
-      type: slot.notificationType,
+    const run = await dispatchNotificationSlot({
+      slot,
+      now,
+      minPlaying,
       users,
       players,
-      attendance,
+      forceRedispatch: options.forceRedispatch,
     });
-
-    let successCount = 0;
-    let failureCount = 0;
-    let skippedCount = skipped.length;
-
-    let subject = "";
-    let detail: string | null = null;
-
-    if (slot.notificationType === "final_status") {
-      detail = `Game is OFF (${playingCount} Playing, need ${minPlaying})`;
-    }
-
-    const baseContent = buildEmailForType({
-      type: slot.notificationType,
-      game: slot.game,
-      attendanceStatus: null,
-      playingCount,
-      minPlaying,
-      appUrl: getAppUrl(),
-    });
-    subject = baseContent.subject;
-
-    for (const recipient of recipients) {
-      const claim = await claimSendSlot({
-        gameId: slot.gameId,
-        type: slot.notificationType,
-        userId: recipient.userId,
-        email: recipient.email,
-        nowIso,
-      });
-      if (claim === "already_sent" || claim === "in_flight") {
-        skippedCount += 1;
-        continue;
-      }
-
-      const content = buildEmailForType({
-        type: slot.notificationType,
-        game: slot.game,
-        attendanceStatus: recipient.attendanceStatus,
-        playingCount,
-        minPlaying,
-        appUrl: getAppUrl(),
-      });
-      subject = content.subject;
-
-      try {
-        const sent = await sendResendEmail({
-          to: recipient.email,
-          content,
-        });
-        await markSendSent({
-          gameId: slot.gameId,
-          type: slot.notificationType,
-          userId: recipient.userId,
-          resendId: sent.id,
-          nowIso,
-        });
-        successCount += 1;
-      } catch (err) {
-        await markSendFailed({
-          gameId: slot.gameId,
-          type: slot.notificationType,
-          userId: recipient.userId,
-          error: sanitizeEmailError(err),
-          nowIso,
-        });
-        failureCount += 1;
-      }
-    }
-
-    const result =
-      recipients.length === 0
-        ? "zero_recipients"
-        : failureCount === 0 && successCount > 0
-          ? "sent"
-          : failureCount > 0 && successCount > 0
-            ? "partial"
-            : failureCount > 0 && successCount === 0
-              ? "failed"
-              : // all already sent / in flight
-                "sent";
-
-    await completeDispatch({
-      gameId: slot.gameId,
-      type: slot.notificationType,
-      nowIso,
-      hasFailures: failureCount > 0,
-    });
-
-    const run = await writeRunLog({
-      at: nowIso,
-      game: slot.game,
-      type: slot.notificationType,
-      subject,
-      result,
-      recipientCount: recipients.length,
-      successCount,
-      failureCount,
-      skippedCount,
-      detail,
-    });
-
-    runs.push({
-      gameId: slot.gameId,
-      type: slot.notificationType,
-      subject,
-      result: run.result,
-      successCount,
-      failureCount,
-      recipientCount: recipients.length,
-      detail,
-    });
+    if (run) runs.push(run);
   }
 
   return { slotsProcessed: slots.length, runs };
+}
+
+/**
+ * Send the existing Game OFF notification (final_status) for a game an
+ * admin just marked No Game. Uses the same template and dispatch dedupe
+ * as the automatic low-attendance OFF rule.
+ */
+export async function dispatchGameOffNotification(
+  game: Game,
+  now: Date = new Date()
+): Promise<ProcessNotificationsResult["runs"][number] | null> {
+  if (game.status !== "scheduled") return null;
+  const settings = await loadNotificationSettings();
+  if (!settings.finalStatus.enabled) return null;
+
+  const db = getAdminDb();
+  const minPlaying = await loadMinPlaying();
+  const [usersSnap, playersSnap] = await Promise.all([
+    db.collection("users").get(),
+    db.collection("players").get(),
+  ]);
+  const users = usersSnap.docs.map((d) => d.data() as UserProfile);
+  const players = playersSnap.docs.map((d) => d.data() as Player);
+
+  return dispatchNotificationSlot({
+    slot: {
+      gameId: game.id,
+      game: { ...game, noGame: true },
+      notificationType: "final_status",
+      dueAt: now,
+      rule: settings.finalStatus,
+    },
+    now,
+    minPlaying,
+    users,
+    players,
+  });
+}
+
+async function dispatchNotificationSlot(input: {
+  slot: ScheduledNotificationSlot;
+  now: Date;
+  minPlaying: number;
+  users: UserProfile[];
+  players: Player[];
+  forceRedispatch?: boolean;
+}): Promise<ProcessNotificationsResult["runs"][number] | null> {
+  const { slot, now, minPlaying, users, players } = input;
+  const db = getAdminDb();
+  const nowIso = now.toISOString();
+
+  // Server-side gate: No Game must not send routine reminders even if a
+  // slot was built (simulate, stale schedule, or a missed flag).
+  if (routineReminderSuppressed(slot.game, slot.notificationType)) {
+    return null;
+  }
+
+  if (input.forceRedispatch) {
+    await resetNotificationDedupeState({
+      gameId: slot.gameId,
+      type: slot.notificationType,
+    });
+  }
+
+  const noGame = Boolean(slot.game.noGame);
+
+  // Automatic Game OFF: evaluate Playing count before claiming so a
+  // sufficient roster does not lock the dispatch (and never sends ON).
+  // Admin No Game always uses this same OFF type, regardless of count.
+  let attendance: AttendanceRecord[] = [];
+  let playingCount = 0;
+  if (slot.notificationType === "final_status") {
+    const attendanceSnap = await db
+      .collection("attendance")
+      .where("gameId", "==", slot.gameId)
+      .get();
+    attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+    playingCount = countPlaying(attendance);
+    if (
+      !noGame &&
+      !shouldSendGameOffThreshold({
+        playingCount,
+        minPlaying,
+      })
+    ) {
+      return null;
+    }
+  }
+
+  const claimed = await claimDispatch({
+    gameId: slot.gameId,
+    type: slot.notificationType,
+    nowIso,
+    force: false,
+  });
+  if (!claimed) return null;
+
+  if (slot.notificationType !== "final_status") {
+    const attendanceSnap = await db
+      .collection("attendance")
+      .where("gameId", "==", slot.gameId)
+      .get();
+    attendance = attendanceSnap.docs.map((d) => d.data() as AttendanceRecord);
+    playingCount = countPlaying(attendance);
+  }
+
+  const { recipients, skipped } = resolveRecipients({
+    type: slot.notificationType,
+    users,
+    players,
+    attendance,
+  });
+
+  let successCount = 0;
+  let failureCount = 0;
+  let skippedCount = skipped.length;
+
+  let subject = "";
+  let detail: string | null = null;
+
+  if (slot.notificationType === "final_status") {
+    detail = `Game is OFF (${playingCount} Playing, need ${minPlaying})`;
+  }
+
+  const forceOff = noGame || playingCount < minPlaying;
+  const baseContent = buildEmailForType({
+    type: slot.notificationType,
+    game: slot.game,
+    attendanceStatus: null,
+    playingCount,
+    minPlaying,
+    appUrl: getAppUrl(),
+    forceOff: slot.notificationType === "final_status" ? forceOff : false,
+  });
+  subject = baseContent.subject;
+
+  for (const recipient of recipients) {
+    const claim = await claimSendSlot({
+      gameId: slot.gameId,
+      type: slot.notificationType,
+      userId: recipient.userId,
+      email: recipient.email,
+      nowIso,
+    });
+    if (claim === "already_sent" || claim === "in_flight") {
+      skippedCount += 1;
+      continue;
+    }
+
+    const content = buildEmailForType({
+      type: slot.notificationType,
+      game: slot.game,
+      attendanceStatus: recipient.attendanceStatus,
+      playingCount,
+      minPlaying,
+      appUrl: getAppUrl(),
+      forceOff: slot.notificationType === "final_status" ? forceOff : false,
+    });
+    subject = content.subject;
+
+    try {
+      const sent = await sendResendEmail({
+        to: recipient.email,
+        content,
+      });
+      await markSendSent({
+        gameId: slot.gameId,
+        type: slot.notificationType,
+        userId: recipient.userId,
+        resendId: sent.id,
+        nowIso,
+      });
+      successCount += 1;
+    } catch (err) {
+      await markSendFailed({
+        gameId: slot.gameId,
+        type: slot.notificationType,
+        userId: recipient.userId,
+        error: sanitizeEmailError(err),
+        nowIso,
+      });
+      failureCount += 1;
+    }
+  }
+
+  const result =
+    recipients.length === 0
+      ? "zero_recipients"
+      : failureCount === 0 && successCount > 0
+        ? "sent"
+        : failureCount > 0 && successCount > 0
+          ? "partial"
+          : failureCount > 0 && successCount === 0
+            ? "failed"
+            : // all already sent / in flight
+              "sent";
+
+  await completeDispatch({
+    gameId: slot.gameId,
+    type: slot.notificationType,
+    nowIso,
+    hasFailures: failureCount > 0,
+  });
+
+  const run = await writeRunLog({
+    at: nowIso,
+    game: slot.game,
+    type: slot.notificationType,
+    subject,
+    result,
+    recipientCount: recipients.length,
+    successCount,
+    failureCount,
+    skippedCount,
+    detail,
+  });
+
+  return {
+    gameId: slot.gameId,
+    type: slot.notificationType,
+    subject,
+    result: run.result,
+    successCount,
+    failureCount,
+    recipientCount: recipients.length,
+    detail,
+  };
 }
 
 async function writeRunLog(input: {

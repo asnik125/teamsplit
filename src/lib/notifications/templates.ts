@@ -99,10 +99,16 @@ export function buildFinalStatusEmail(input: {
   playingCount: number;
   minPlaying?: number;
   appUrl: string;
+  /**
+   * Stay on the OFF branch. Admin No Game must not fall through to
+   * "Game is ON" when confirmed Playing still meets the minimum.
+   * The body itself follows game.noGame (cancellation) vs low attendance.
+   */
+  forceOff?: boolean;
 }): EmailContent {
   const minPlaying = input.minPlaying ?? DEFAULT_MIN_PLAYING_FOR_FINAL;
   const { game, playingCount, appUrl } = input;
-  const isOn = playingCount >= minPlaying;
+  const isOn = !input.forceOff && playingCount >= minPlaying;
   const when = `${formatDisplayDate(game.date)} · ${formatDisplayTime(game.startTime)}`;
   if (isOn) {
     // Kept for template completeness; automatic final_status rule does not send ON.
@@ -128,6 +134,24 @@ export function buildFinalStatusEmail(input: {
   }
 
   const subject = "TeamSplit — Game is OFF";
+  if (game.noGame) {
+    const text = [
+      "TeamSplit",
+      "",
+      "Game is OFF",
+      when,
+      `Location: ${game.location}`,
+      "",
+      openLink(appUrl),
+    ].join("\n");
+    const html = wrapHtml(
+      `<p><strong>Game is OFF</strong></p>
+       <p>${when}<br/>Location: ${escapeHtml(game.location)}</p>`,
+      appUrl
+    );
+    return { subject, text, html };
+  }
+
   const countLine = `${playingCount} confirmed Playing (minimum required: ${minPlaying}).`;
   const reason = "Game is OFF — not enough confirmed players.";
   const text = [
@@ -184,6 +208,7 @@ export function buildEmailForType(input: {
   playingCount: number;
   minPlaying?: number;
   appUrl: string;
+  forceOff?: boolean;
 }): EmailContent {
   if (input.type === "game_reminder") {
     return buildGameReminderEmail({
@@ -203,6 +228,7 @@ export function buildEmailForType(input: {
     playingCount: input.playingCount,
     minPlaying: input.minPlaying,
     appUrl: input.appUrl,
+    forceOff: input.forceOff,
   });
 }
 

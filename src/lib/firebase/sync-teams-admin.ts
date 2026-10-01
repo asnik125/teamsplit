@@ -41,6 +41,8 @@ import {
   computeBestBalancedSplit,
   MissingEvaluationError,
 } from "../team-generate";
+import { dispatchGameOffNotification } from "../notifications/process";
+import { resetNotificationDedupeState } from "../notifications/store";
 import { getAdminDb } from "./admin";
 
 function nowIso() {
@@ -817,12 +819,33 @@ export async function setGameNoGame(input: {
       teamsStatusMessage: "No game this week",
       lastAttendanceChange: null,
     });
+
+    if (existing.status === "scheduled") {
+      await dispatchGameOffNotification(
+        {
+          ...existing,
+          id: input.gameId,
+          noGame: true,
+          updatedAt: now,
+          teamsMayBeStale: false,
+          teamsStatusMessage: "No game this week",
+          lastAttendanceChange: null,
+        },
+        new Date(now)
+      );
+    }
   } else {
     await gameRef.update({
       noGame: false,
       updatedAt: now,
       teamsMayBeStale: false,
       teamsStatusMessage: null,
+    });
+    // Ending this cancellation lets a later OFF (new No Game mark, or the
+    // automatic low-attendance rule) claim final_status again.
+    await resetNotificationDedupeState({
+      gameId: input.gameId,
+      type: "final_status",
     });
   }
 

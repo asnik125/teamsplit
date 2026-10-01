@@ -9,6 +9,7 @@ import {
   addCalendarDays,
   parseTimeLocal,
   vancouverLocalToUtc,
+  zonedCalendarDate,
 } from "./timezone";
 
 /** Hours before kickoff for the automatic Game OFF threshold check. */
@@ -108,6 +109,17 @@ export function shouldSendGameOffThreshold(input: {
   return input.playingCount < min;
 }
 
+/**
+ * Day-before, same-day, and attendance/Maybe reminders never send for No Game.
+ * Game OFF stays on the existing final_status type.
+ */
+export function routineReminderSuppressed(
+  game: Pick<Game, "noGame">,
+  notificationType: NotificationType
+): boolean {
+  return Boolean(game.noGame) && notificationType !== "final_status";
+}
+
 export function buildDueSlots(input: {
   games: Game[];
   settings: NotificationSettings;
@@ -131,7 +143,27 @@ export function buildDueSlots(input: {
   for (const game of games) {
     if (onlyGameId && game.id !== onlyGameId) continue;
     if (game.status !== "scheduled") continue;
-    if (Boolean(game.noGame)) continue;
+
+    // No Game: never schedule routine reminders. The existing Game OFF
+    // type stays due through the end of that Vancouver calendar day so a
+    // later cron can deliver it once. Dedupe is the final_status dispatch.
+    if (Boolean(game.noGame)) {
+      if (onlyType && onlyType !== "final_status") continue;
+      const rule = ruleForType(settings, "final_status");
+      if (!rule.enabled) continue;
+      const due =
+        forceDue ||
+        zonedCalendarDate(now, settings.timezone) <= game.date;
+      if (!due) continue;
+      slots.push({
+        gameId: game.id,
+        game,
+        notificationType: "final_status",
+        dueAt: now,
+        rule,
+      });
+      continue;
+    }
 
     for (const notificationType of types) {
       const rule = ruleForType(settings, notificationType);

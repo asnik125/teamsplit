@@ -152,7 +152,16 @@ describe("No Game notifications", () => {
       settings,
       now: afterDayBefore,
     });
-    expect(slots.every((s) => s.gameId !== "nogame")).toBe(true);
+    const noGameSlots = slots.filter((s) => s.gameId === "nogame");
+    expect(noGameSlots.every((s) => s.notificationType === "final_status")).toBe(
+      true
+    );
+    expect(
+      noGameSlots.some((s) => s.notificationType === "game_reminder")
+    ).toBe(false);
+    expect(
+      noGameSlots.some((s) => s.notificationType === "maybe_reminder")
+    ).toBe(false);
 
     const dueAt = computeNotificationDueAt(noGameDate, settings.gameReminder);
     expect(

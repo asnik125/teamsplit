@@ -13,6 +13,7 @@ import {
   computeNotificationDueAt,
   dueAtForNotificationType,
   isNotificationDue,
+  routineReminderSuppressed,
   shouldSendGameOffThreshold,
 } from "@/lib/notifications/schedule";
 import { defaultNotificationSettings, sendRecordId } from "@/lib/notifications/defaults";
@@ -356,7 +357,7 @@ describe("automatic Game OFF (final_status)", () => {
     ).toBe(false);
   });
 
-  it("OFF email subject and body include date, count, minimum, and reason", () => {
+  it("automatic OFF email includes date, count, minimum, and low-attendance reason", () => {
     const g = game({ id: "g", date: "2026-09-24", startTime: "19:30" });
     const email = buildFinalStatusEmail({
       game: g,
@@ -369,6 +370,35 @@ describe("automatic Game OFF (final_status)", () => {
     expect(email.text).toContain("5 confirmed Playing (minimum required: 6)");
     expect(email.text).toMatch(/Sep|September|2026-09-24|09\/24/i);
     expect(email.text).toMatch(/7:30|19:30/i);
+    expect(email.text).not.toContain("Your current attendance");
+  });
+
+  it("admin No Game OFF email omits attendance reason and player count", () => {
+    const g = game({
+      id: "g",
+      date: "2026-10-01",
+      startTime: "19:30",
+      noGame: true,
+    });
+    const email = buildFinalStatusEmail({
+      game: g,
+      playingCount: 8,
+      minPlaying: 6,
+      forceOff: true,
+      appUrl: "http://localhost:3000",
+    });
+    expect(email.subject).toBe("TeamSplit — Game is OFF");
+    expect(email.text).toContain("Game is OFF");
+    expect(email.text).toContain("Thursday, October 1");
+    expect(email.text).toContain("7:30 PM");
+    expect(email.text).toContain("Location: Gym");
+    expect(email.text).not.toContain("not enough confirmed players");
+    expect(email.text).not.toContain("confirmed Playing");
+    expect(email.text).not.toContain("minimum required");
+    expect(email.text).not.toContain("Your current attendance");
+    expect(email.html).not.toContain("not enough confirmed players");
+    expect(email.html).not.toContain("confirmed Playing");
+    expect(email.html).not.toContain("Your current attendance");
   });
 
   it("Admin+Player is included when email notifications opted in", () => {
@@ -431,7 +461,7 @@ describe("automatic Game OFF (final_status)", () => {
     );
   });
 
-  it("No Game dates do not trigger Game OFF slot", () => {
+  it("No Game uses the existing OFF slot and skips routine reminders", () => {
     const settings = defaultNotificationSettings();
     const games = [
       game({
@@ -442,18 +472,53 @@ describe("automatic Game OFF (final_status)", () => {
       }),
     ];
     const now = vancouverLocalToUtc("2026-09-24", "17:35");
-    const slots = buildDueSlots({
+    const offSlots = buildDueSlots({
       games,
       settings,
       now,
       onlyType: "final_status",
     });
-    expect(slots).toHaveLength(0);
+    expect(offSlots).toHaveLength(1);
+    expect(offSlots[0]?.notificationType).toBe("final_status");
+
+    const reminderSlots = buildDueSlots({
+      games,
+      settings,
+      now: vancouverLocalToUtc("2026-09-23", "19:05"),
+      onlyType: "game_reminder",
+    });
+    expect(reminderSlots).toHaveLength(0);
+    const maybeSlots = buildDueSlots({
+      games,
+      settings,
+      now,
+      onlyType: "maybe_reminder",
+    });
+    expect(maybeSlots).toHaveLength(0);
+    const afterKickoffSameDay = buildDueSlots({
+      games,
+      settings,
+      now: vancouverLocalToUtc("2026-09-24", "20:00"),
+      onlyType: "final_status",
+    });
+    expect(afterKickoffSameDay).toHaveLength(1);
+    const nextMorning = buildDueSlots({
+      games,
+      settings,
+      now: vancouverLocalToUtc("2026-09-25", "09:00"),
+      onlyType: "final_status",
+    });
+    expect(nextMorning).toHaveLength(0);
+    expect(routineReminderSuppressed(games[0]!, "game_reminder")).toBe(true);
+    expect(routineReminderSuppressed(games[0]!, "maybe_reminder")).toBe(true);
+    expect(routineReminderSuppressed(games[0]!, "final_status")).toBe(false);
+
+    // Generic due check still refuses No Game; OFF is scheduled explicitly.
     expect(
       isNotificationDue({
-        dueAt: computeGameOffThresholdDueAt(games[0]),
+        dueAt: computeGameOffThresholdDueAt(games[0]!),
         now,
-        game: games[0],
+        game: games[0]!,
       })
     ).toBe(false);
   });
