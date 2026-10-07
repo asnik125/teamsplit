@@ -18,6 +18,7 @@ import type {
 import { parseTeamRatingSystem, SIMPLE_RATING_KEYS } from "../types";
 import {
   DEFAULT_MIN_PLAYING_FOR_TEAMS,
+  insufficientMessage,
   isIncludedForTeams,
   type TeamsSyncDecision,
 } from "../team-sync";
@@ -29,8 +30,11 @@ import {
 } from "../no-game";
 import {
   areTeamsStale,
+  clearedGeneratedTeams,
+  countConfirmedPlaying,
   eligiblePlayerIdsFromAttendance,
   eligiblePoolFingerprint,
+  shouldClearGeneratedTeams,
   teamsHaveComposition,
   teamsStatusMessageForState,
   TEAMS_STALE_MESSAGE,
@@ -165,11 +169,45 @@ async function refreshGameTeamsBanner(input: {
   teams: GameTeams | null;
   eligibleIds: string[];
   minPlaying: number;
+  playingCount?: number;
+  includeMaybePlayers?: boolean;
+  updatedBy?: string | null;
   lastAttendanceChange?: Game["lastAttendanceChange"];
-}): Promise<{ stale: boolean; message: string }> {
+}): Promise<{ stale: boolean; message: string; cleared: boolean }> {
   const db = getAdminDb();
   const now = nowIso();
   const hasComposition = teamsHaveComposition(input.teams);
+  if (
+    input.playingCount !== undefined &&
+    shouldClearGeneratedTeams({
+      playingCount: input.playingCount,
+      minPlaying: input.minPlaying,
+      hasComposition,
+    })
+  ) {
+    const message = insufficientMessage(input.minPlaying);
+    await db.collection("gameTeams").doc(input.gameId).set(
+      clearedGeneratedTeams({
+        gameId: input.gameId,
+        includeMaybePlayers: Boolean(
+          input.includeMaybePlayers ?? input.teams?.includeMaybePlayers
+        ),
+        updatedAt: now,
+        updatedBy: input.updatedBy ?? input.teams?.updatedBy ?? null,
+      })
+    );
+    const gameUpdate: Partial<Game> = {
+      updatedAt: now,
+      teamsMayBeStale: false,
+      teamsStatusMessage: message,
+    };
+    if (input.lastAttendanceChange) {
+      gameUpdate.lastAttendanceChange = input.lastAttendanceChange;
+    }
+    await db.collection("games").doc(input.gameId).update(gameUpdate);
+    return { stale: false, message, cleared: true };
+  }
+
   const stale = areTeamsStale({
     teams: input.teams,
     currentEligibleIds: input.eligibleIds,
@@ -178,6 +216,7 @@ async function refreshGameTeamsBanner(input: {
     hasComposition,
     stale,
     includedCount: input.eligibleIds.length,
+    playingCount: input.playingCount,
     minPlaying: input.minPlaying,
   });
 
@@ -197,7 +236,7 @@ async function refreshGameTeamsBanner(input: {
     gameUpdate.lastAttendanceChange = input.lastAttendanceChange;
   }
   await db.collection("games").doc(input.gameId).update(gameUpdate);
-  return { stale, message };
+  return { stale, message, cleared: false };
 }
 
 export interface AttendanceSyncResult {
@@ -209,8 +248,9 @@ export interface AttendanceSyncResult {
 }
 
 /**
- * Save attendance only. Never regenerates or clears gameTeams.
- * If a composition exists and the eligible pool changed, marks it stale.
+ * Save attendance. Does not regenerate teams.
+ * Clears a saved roster when confirmed Playing falls below the minimum.
+ * Otherwise marks an existing composition stale when the eligible pool changes.
  */
 export async function applyAttendanceAndSyncTeams(input: {
   gameId: string;
@@ -290,12 +330,16 @@ export async function applyAttendanceAndSyncTeams(input: {
     attendance,
     includeMaybe,
   });
+  const playingCount = countConfirmedPlaying({ players, attendance });
 
   const { stale, message } = await refreshGameTeamsBanner({
     gameId: input.gameId,
     teams: existingTeams,
     eligibleIds,
     minPlaying: settings.minPlaying,
+    playingCount,
+    includeMaybePlayers: includeMaybe,
+    updatedBy: input.updatedBy,
     lastAttendanceChange: {
       playerId: input.playerId,
       displayName,
@@ -381,6 +425,34 @@ export async function setIncludeMaybePreference(input: {
     attendance,
     includeMaybe: input.includeMaybePlayers,
   });
+  const playingCount = countConfirmedPlaying({ players, attendance });
+  if (
+    shouldClearGeneratedTeams({
+      playingCount,
+      minPlaying: settings.minPlaying,
+      hasComposition: teamsHaveComposition(existingTeams),
+    })
+  ) {
+    const cleared = clearedGeneratedTeams({
+      gameId: input.gameId,
+      includeMaybePlayers: input.includeMaybePlayers,
+      updatedAt: now,
+      updatedBy: input.updatedBy,
+    });
+    await teamsRef.set(cleared);
+    const message = insufficientMessage(settings.minPlaying);
+    await gameRef.update({
+      updatedAt: now,
+      teamsMayBeStale: false,
+      teamsStatusMessage: message,
+    });
+    return emptyDecision(
+      input.includeMaybePlayers,
+      settings.minPlaying,
+      message
+    );
+  }
+
   const stale = areTeamsStale({
     teams: {
       ...nextTeams,
@@ -399,6 +471,7 @@ export async function setIncludeMaybePreference(input: {
     hasComposition: teamsHaveComposition(nextTeams),
     stale: Boolean(nextTeams.stale),
     includedCount: eligibleIds.length,
+    playingCount,
     minPlaying: settings.minPlaying,
   });
   await gameRef.update({
@@ -485,9 +558,26 @@ export async function generateTeamsExplicit(input: {
     attendance,
     includeMaybe,
   });
+  const playingCount = countConfirmedPlaying({ players, attendance });
 
-  if (eligibleIds.length < settings.minPlaying) {
+  if (playingCount < settings.minPlaying || eligibleIds.length < settings.minPlaying) {
     const message = "Not enough players yet.";
+    if (
+      shouldClearGeneratedTeams({
+        playingCount,
+        minPlaying: settings.minPlaying,
+        hasComposition: teamsHaveComposition(existingTeams),
+      })
+    ) {
+      await teamsRef.set(
+        clearedGeneratedTeams({
+          gameId: input.gameId,
+          includeMaybePlayers: includeMaybe,
+          updatedAt: nowIso(),
+          updatedBy: input.updatedBy,
+        })
+      );
+    }
     await gameRef.update({
       updatedAt: nowIso(),
       teamsMayBeStale: false,
@@ -663,6 +753,9 @@ export async function markNearestTeamsStaleAfterLifecycle(
     teams,
     eligibleIds,
     minPlaying: settings.minPlaying,
+    playingCount: countConfirmedPlaying({ players, attendance }),
+    includeMaybePlayers: Boolean(teams!.includeMaybePlayers),
+    updatedBy,
   });
   return { gameId: nearestId, marked: stale };
 }
@@ -716,6 +809,9 @@ export async function ensureNearestTeamsIntegrity(
     teams,
     eligibleIds,
     minPlaying: settings.minPlaying,
+    playingCount: countConfirmedPlaying({ players, attendance }),
+    includeMaybePlayers: Boolean(teams?.includeMaybePlayers),
+    updatedBy,
   });
   return { gameId: nearestId, repaired: false, decision: null };
 }

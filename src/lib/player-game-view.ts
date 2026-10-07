@@ -173,19 +173,18 @@ export function buildPlayerGameView(input: {
     };
   }
 
-  if (includedCount < minPlaying) {
-    const hasLists = teamsHaveComposition(currentTeams);
+  if (playingCount < minPlaying) {
     return {
       ...base,
       teamsPhase: "insufficient",
       teamsMessage: insufficientMessage(minPlaying),
       myTeamLabel: null,
-      showTeamLists: hasLists,
+      showTeamLists: false,
       showProgress: false,
-      teamA: currentTeams?.teamA ?? [],
-      teamB: currentTeams?.teamB ?? [],
-      teamC: currentTeams?.teamC ?? [],
-      stale: hasLists,
+      teamA: [],
+      teamB: [],
+      teamC: [],
+      stale: false,
     };
   }
 

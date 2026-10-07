@@ -5,6 +5,60 @@ export const TEAMS_STALE_MESSAGE = "Attendance changed — generate teams again"
 export const TEAMS_READY_MESSAGE = "Teams ready";
 export const TEAMS_AWAITING_GENERATE_MESSAGE = "Generate teams when ready";
 
+/**
+ * Confirmed Playing among active players. Maybe never counts, even when
+ * Include Maybe is on for generation.
+ */
+export function countConfirmedPlaying(input: {
+  players: { id: string; active: boolean }[];
+  attendance: { playerId: string; status: AttendanceStatus }[];
+}): number {
+  const active = new Set(
+    input.players.filter((p) => p.active).map((p) => p.id)
+  );
+  const seen = new Set<string>();
+  let count = 0;
+  for (const row of input.attendance) {
+    if (!active.has(row.playerId) || row.status !== "playing") continue;
+    if (seen.has(row.playerId)) continue;
+    seen.add(row.playerId);
+    count += 1;
+  }
+  return count;
+}
+
+/** Saved teams may exist only while confirmed Playing meets the minimum. */
+export function shouldClearGeneratedTeams(input: {
+  playingCount: number;
+  minPlaying: number;
+  hasComposition: boolean;
+}): boolean {
+  const minPlaying = Math.max(2, Math.floor(input.minPlaying));
+  return input.hasComposition && input.playingCount < minPlaying;
+}
+
+/** Empty roster written over a saved game. Omits teamC so a replace drops it. */
+export function clearedGeneratedTeams(input: {
+  gameId: string;
+  includeMaybePlayers: boolean;
+  updatedAt: string;
+  updatedBy: string | null;
+}): GameTeams {
+  return {
+    gameId: input.gameId,
+    teamA: [],
+    teamB: [],
+    published: false,
+    publishedAt: null,
+    updatedAt: input.updatedAt,
+    updatedBy: input.updatedBy,
+    manuallyAdjusted: false,
+    includeMaybePlayers: input.includeMaybePlayers,
+    stale: false,
+    eligibleFingerprint: null,
+  };
+}
+
 /** Sorted eligible player ids for a given includeMaybe preference. */
 export function eligiblePlayerIdsFromAttendance(input: {
   players: { id: string; active: boolean }[];
@@ -72,9 +126,12 @@ export function teamsStatusMessageForState(input: {
   hasComposition: boolean;
   stale: boolean;
   includedCount: number;
+  /** Confirmed Playing. When omitted, includedCount is used. */
+  playingCount?: number;
   minPlaying: number;
 }): string {
-  if (input.includedCount < input.minPlaying) {
+  const playing = input.playingCount ?? input.includedCount;
+  if (playing < input.minPlaying) {
     return "Not enough players yet.";
   }
   if (!input.hasComposition) {

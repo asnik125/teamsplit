@@ -50,6 +50,7 @@ describe("buildPlayerGameView", () => {
       maybeCount: 1,
       includedCount: 6,
       currentTeams: teams(),
+      minPlaying: 5,
     });
     expect(v.teamsMessage).toBe("Teams ready");
     expect(v.showTeamLists).toBe(true);
@@ -65,6 +66,7 @@ describe("buildPlayerGameView", () => {
       maybeCount: 1,
       includedCount: 6,
       currentTeams: teams(),
+      minPlaying: 5,
     });
     const onWhite = buildPlayerGameView({
       myStatus: "playing",
@@ -73,6 +75,7 @@ describe("buildPlayerGameView", () => {
       maybeCount: 1,
       includedCount: 6,
       currentTeams: teams(),
+      minPlaying: 5,
     });
     expect(onBlack.myTeamLabel).toBe("Team Black");
     expect(onWhite.myTeamLabel).toBe("Team White");
