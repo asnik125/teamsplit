@@ -28,6 +28,10 @@ import {
   isIncludedForTeams,
 } from "@/lib/team-sync";
 import {
+  teamsHaveComposition,
+  withoutGeneratedRosters,
+} from "@/lib/team-eligibility";
+import {
   canEditAttendanceOnGame,
   effectiveAttendanceStatus,
   gameHasNoGame,
@@ -191,10 +195,23 @@ export function useNearestGameSession() {
     const key = `${gId}_${playerId}`;
     setError(null);
     setSavingKey(key);
+    const nextByPlayer = { ...(grid[gId] ?? {}), [playerId]: status };
     setGrid((cur) => ({
       ...cur,
-      [gId]: { ...(cur[gId] ?? {}), [playerId]: status },
+      [gId]: nextByPlayer,
     }));
+    let blankedRosters = false;
+    if (gId === teamsGameId) {
+      const playingNow = players.filter(
+        (p) => (nextByPlayer[p.id] ?? "no_response") === "playing"
+      ).length;
+      if (playingNow < minPlaying) {
+        blankedRosters = true;
+        setTeams((cur) =>
+          cur && teamsHaveComposition(cur) ? withoutGeneratedRosters(cur) : cur
+        );
+      }
+    }
 
     try {
       await setAttendanceAndSync(user, gId, playerId, status);
@@ -209,6 +226,10 @@ export function useNearestGameSession() {
         ...cur,
         [gId]: { ...(cur[gId] ?? {}), [playerId]: prev },
       }));
+      if (blankedRosters && teamsGameId) {
+        const t = await getGameTeams(getClientDb(), teamsGameId);
+        setTeams(t);
+      }
       setError(formatUnknownError(e));
     } finally {
       setSavingKey(null);

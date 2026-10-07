@@ -37,6 +37,7 @@ import {
   shouldClearGeneratedTeams,
   teamsHaveComposition,
   teamsStatusMessageForState,
+  TEAMS_AWAITING_GENERATE_MESSAGE,
   TEAMS_STALE_MESSAGE,
   TEAMS_READY_MESSAGE,
 } from "../team-eligibility";
@@ -185,7 +186,10 @@ async function refreshGameTeamsBanner(input: {
       hasComposition,
     })
   ) {
-    const message = insufficientMessage(input.minPlaying);
+    const message =
+      input.eligibleIds.length < input.minPlaying
+        ? insufficientMessage(input.minPlaying)
+        : TEAMS_AWAITING_GENERATE_MESSAGE;
     await db.collection("gameTeams").doc(input.gameId).set(
       clearedGeneratedTeams({
         gameId: input.gameId,
@@ -440,7 +444,10 @@ export async function setIncludeMaybePreference(input: {
       updatedBy: input.updatedBy,
     });
     await teamsRef.set(cleared);
-    const message = insufficientMessage(settings.minPlaying);
+    const message =
+      eligibleIds.length < settings.minPlaying
+        ? insufficientMessage(settings.minPlaying)
+        : TEAMS_AWAITING_GENERATE_MESSAGE;
     await gameRef.update({
       updatedAt: now,
       teamsMayBeStale: false,
@@ -558,26 +565,8 @@ export async function generateTeamsExplicit(input: {
     attendance,
     includeMaybe,
   });
-  const playingCount = countConfirmedPlaying({ players, attendance });
-
-  if (playingCount < settings.minPlaying || eligibleIds.length < settings.minPlaying) {
+  if (eligibleIds.length < settings.minPlaying) {
     const message = "Not enough players yet.";
-    if (
-      shouldClearGeneratedTeams({
-        playingCount,
-        minPlaying: settings.minPlaying,
-        hasComposition: teamsHaveComposition(existingTeams),
-      })
-    ) {
-      await teamsRef.set(
-        clearedGeneratedTeams({
-          gameId: input.gameId,
-          includeMaybePlayers: includeMaybe,
-          updatedAt: nowIso(),
-          updatedBy: input.updatedBy,
-        })
-      );
-    }
     await gameRef.update({
       updatedAt: nowIso(),
       teamsMayBeStale: false,

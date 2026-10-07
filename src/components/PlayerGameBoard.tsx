@@ -27,6 +27,10 @@ import {
 } from "@/lib/player-game-view";
 import { DEFAULT_MIN_PLAYING_FOR_TEAMS, isIncludedForTeams } from "@/lib/team-sync";
 import {
+  teamsHaveComposition,
+  withoutGeneratedRosters,
+} from "@/lib/team-eligibility";
+import {
   formatDisplayDate,
   formatDisplayTime,
   formatShortDate,
@@ -255,10 +259,23 @@ export function PlayerGameBoard() {
     const key = `${gId}_${playerId}`;
     setError(null);
     setSavingKey(key);
+    const nextByPlayer = { ...(grid[gId] ?? {}), [playerId]: status };
     setGrid((cur) => ({
       ...cur,
-      [gId]: { ...(cur[gId] ?? {}), [playerId]: status },
+      [gId]: nextByPlayer,
     }));
+    let blankedRosters = false;
+    if (gId === teamsGameId) {
+      const playingNow = players.filter(
+        (p) => (nextByPlayer[p.id] ?? "no_response") === "playing"
+      ).length;
+      if (playingNow < minPlaying) {
+        blankedRosters = true;
+        setTeams((cur) =>
+          cur && teamsHaveComposition(cur) ? withoutGeneratedRosters(cur) : cur
+        );
+      }
+    }
 
     try {
       await setAttendanceAndSync(user, gId, playerId, status);
@@ -273,6 +290,10 @@ export function PlayerGameBoard() {
         ...cur,
         [gId]: { ...(cur[gId] ?? {}), [playerId]: prev },
       }));
+      if (blankedRosters && teamsGameId) {
+        const t = await getGameTeams(getClientDb(), teamsGameId);
+        setTeams(t);
+      }
       setError(formatUnknownError(e));
     } finally {
       setSavingKey(null);

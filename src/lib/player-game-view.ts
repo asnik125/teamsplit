@@ -173,7 +173,7 @@ export function buildPlayerGameView(input: {
     };
   }
 
-  if (playingCount < minPlaying) {
+  if (includedCount < minPlaying) {
     return {
       ...base,
       teamsPhase: "insufficient",

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { buildPlayerGameView } from "@/lib/player-game-view";
+import { isIncludedForTeams } from "@/lib/team-sync";
+import { createThreeTeamsControl } from "@/lib/team-generate";
 import {
   areTeamsStale,
   clearedGeneratedTeams,
@@ -85,16 +87,14 @@ describe("teams clear when confirmed Playing drops below the minimum", () => {
       myStatus: "playing",
       myPlayerId: "p1",
       playingCount: 5,
-      maybeCount: 2,
-      includedCount: 7,
-      currentTeams: generated([member("p7"), member("p8"), member("p9")]),
+      maybeCount: 0,
+      includedCount: 5,
+      currentTeams: teams,
       minPlaying: 6,
     });
+    expect(hidden.teamsPhase).toBe("insufficient");
     expect(hidden.teamsMessage).toBe("Not enough players yet.");
     expect(hidden.showTeamLists).toBe(false);
-    expect(hidden.teamA).toEqual([]);
-    expect(hidden.teamB).toEqual([]);
-    expect(hidden.teamC).toEqual([]);
 
     const restored = buildPlayerGameView({
       myStatus: "playing",
@@ -115,6 +115,83 @@ describe("teams clear when confirmed Playing drops below the minimum", () => {
         hasComposition: teamsHaveComposition(teams),
       })
     ).toBe(false);
+  });
+
+  it("Generate uses Playing plus Maybe only when Include Maybe is on", () => {
+    function view(input: {
+      playing: number;
+      maybe: number;
+      includeMaybe: boolean;
+    }) {
+      const included = input.includeMaybe
+        ? input.playing + input.maybe
+        : input.playing;
+      return buildPlayerGameView({
+        myStatus: "playing",
+        myPlayerId: "p1",
+        playingCount: input.playing,
+        maybeCount: input.maybe,
+        includedCount: included,
+        includeMaybePlayers: input.includeMaybe,
+        currentTeams: null,
+        minPlaying: 6,
+      });
+    }
+
+    const off = view({ playing: 5, maybe: 1, includeMaybe: false });
+    expect(off.teamsPhase).toBe("insufficient");
+    expect(off.teamsMessage).toBe("Not enough players yet.");
+
+    const oneMaybe = view({ playing: 5, maybe: 1, includeMaybe: true });
+    expect(oneMaybe.teamsPhase).toBe("awaiting_generate");
+    expect(oneMaybe.teamsMessage).toBe("Generate teams when ready");
+    expect(oneMaybe.showTeamLists).toBe(false);
+
+    const twoMaybe = view({ playing: 4, maybe: 2, includeMaybe: true });
+    expect(twoMaybe.teamsPhase).toBe("awaiting_generate");
+
+    const shortPool = view({ playing: 4, maybe: 1, includeMaybe: true });
+    expect(shortPool.teamsPhase).toBe("insufficient");
+
+    const generatedFromPool = buildPlayerGameView({
+      myStatus: "maybe",
+      myPlayerId: "m1",
+      playingCount: 5,
+      maybeCount: 1,
+      includedCount: 6,
+      includeMaybePlayers: true,
+      currentTeams: generated([member("m1")]),
+      minPlaying: 6,
+    });
+    expect(generatedFromPool.teamsPhase).not.toBe("insufficient");
+    expect(generatedFromPool.showTeamLists).toBe(true);
+    expect(generatedFromPool.teamC.map((player) => player.playerId)).toEqual([
+      "m1",
+    ]);
+
+    const pool = (playing: number, maybe: number, includeMaybe: boolean) =>
+      [
+        ...Array.from({ length: playing }, () => "playing" as const),
+        ...Array.from({ length: maybe }, () => "maybe" as const),
+      ].filter((status) => isIncludedForTeams(status, includeMaybe)).length;
+    expect(pool(10, 1, false)).toBe(10);
+    expect(
+      createThreeTeamsControl({ eligibleCount: pool(10, 1, false), checked: true })
+        .enabled
+    ).toBe(false);
+    expect(pool(10, 1, true)).toBe(11);
+    expect(
+      createThreeTeamsControl({ eligibleCount: pool(10, 1, true), checked: false })
+        .enabled
+    ).toBe(true);
+
+    expect(
+      shouldClearGeneratedTeams({
+        playingCount: 5,
+        minPlaying: 6,
+        hasComposition: true,
+      })
+    ).toBe(true);
   });
 
   it("Maybe does not keep teams when Playing is below the minimum", () => {

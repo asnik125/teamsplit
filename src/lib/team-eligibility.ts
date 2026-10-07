@@ -37,6 +37,19 @@ export function shouldClearGeneratedTeams(input: {
   return input.hasComposition && input.playingCount < minPlaying;
 }
 
+/** Drop saved rosters in memory while an attendance save is in flight. */
+export function withoutGeneratedRosters(teams: GameTeams): GameTeams {
+  const next: GameTeams = {
+    ...teams,
+    teamA: [],
+    teamB: [],
+    stale: false,
+    eligibleFingerprint: null,
+  };
+  delete next.teamC;
+  return next;
+}
+
 /** Empty roster written over a saved game. Omits teamC so a replace drops it. */
 export function clearedGeneratedTeams(input: {
   gameId: string;
@@ -131,7 +144,7 @@ export function teamsStatusMessageForState(input: {
   minPlaying: number;
 }): string {
   const playing = input.playingCount ?? input.includedCount;
-  if (playing < input.minPlaying) {
+  if (playing < input.minPlaying && input.includedCount < input.minPlaying) {
     return "Not enough players yet.";
   }
   if (!input.hasComposition) {
