@@ -18,6 +18,25 @@ export interface NotificationRecipient {
   attendanceStatus: AttendanceStatus | null;
 }
 
+/** Live attendance audience for one notification type. */
+export function isAudienceForNotification(
+  type: NotificationType,
+  status: AttendanceStatus | null
+): boolean {
+  if (type === "game_reminder") return status === "no_response";
+  if (type === "maybe_reminder") return status === "maybe";
+  if (type === "final_status") {
+    return status === "playing" || status === "maybe";
+  }
+  return false;
+}
+
+function skipReasonForNotification(type: NotificationType): string {
+  if (type === "game_reminder") return "not_no_response";
+  if (type === "maybe_reminder") return "not_maybe";
+  return "not_playing_or_maybe";
+}
+
 function isValidEmail(email: string | null | undefined): email is string {
   if (!email) return false;
   const t = email.trim();
@@ -27,7 +46,8 @@ function isValidEmail(email: string | null | undefined): email is string {
 /**
  * Resolve recipients for a notification.
  * Email source: users/{uid}.email (authoritative Auth-linked profile).
- * Requires: active, notifications opt-in (default ON), valid email.
+ * Requires: active, notifications opt-in (default ON), valid email, and the
+ * live attendance audience for this type (No response, Maybe, or Playing/Maybe).
  * Admin role does not exclude — Admin+Player is treated like Player for eligibility.
  * Missing email → skip (caller logs); never fails the whole job.
  */
@@ -72,11 +92,12 @@ export function resolveRecipients(input: {
       ? (attendanceByPlayer.get(playerId) ?? "no_response")
       : null;
 
-    if (type === "maybe_reminder") {
-      if (status !== "maybe") {
-        skipped.push({ userId: user.uid, reason: "not_maybe" });
-        continue;
-      }
+    if (!isAudienceForNotification(type, status)) {
+      skipped.push({
+        userId: user.uid,
+        reason: skipReasonForNotification(type),
+      });
+      continue;
     }
 
     // Prefer linked player display name when available.

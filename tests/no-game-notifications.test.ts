@@ -325,6 +325,7 @@ describe("No Game notification dispatch", () => {
   it("repeated cron does not duplicate OFF for a game already marked No Game", async () => {
     await seedUser();
     await seedGame({ ...oct1, noGame: true });
+    await seedAttendance(oct1.id, 1, "playing");
 
     await processDueNotifications({ now: reminderNow });
     expect(h.sent).toHaveLength(1);
@@ -345,13 +346,13 @@ describe("No Game notification dispatch", () => {
   it("active game still sends the normal tomorrow reminder", async () => {
     await seedUser();
     await seedGame({ ...oct1, noGame: false });
-    await seedAttendance(oct1.id, 1, "playing");
+    await seedAttendance(oct1.id, 1, "no_response");
 
     await processDueNotifications({ now: reminderNow });
 
     expect(h.sent).toHaveLength(1);
     expect(h.sent[0]?.subject).toBe("TeamSplit — Game tomorrow");
-    expect(h.sent[0]?.text).toContain("Your current attendance: Playing");
+    expect(h.sent[0]?.text).toContain("Your current attendance: No response");
     expect(h.sent[0]?.text).toContain("Thursday, October 1");
     expect(h.sent[0]?.text).toContain("7:30 PM");
   });
@@ -409,5 +410,126 @@ describe("No Game notification dispatch", () => {
 
     await processDueNotifications({ now: offNow });
     expect(h.sent).toHaveLength(2);
+  });
+});
+
+const audienceStatuses = [
+  "playing",
+  "maybe",
+  "not_playing",
+  "no_response",
+] as const;
+
+async function seedAudience(gameId: string) {
+  for (const status of audienceStatuses) {
+    const user: UserProfile = {
+      uid: `u_${status}`,
+      playerId: `p_${status}`,
+      displayName: status,
+      email: `${status}@example.com`,
+      role: "player",
+      emailNotifications: true,
+      active: true,
+      createdAt: "",
+      updatedAt: "",
+    };
+    const player: Player = {
+      id: `p_${status}`,
+      displayName: status,
+      email: null,
+      active: true,
+      linkedUid: user.uid,
+      createdAt: "",
+      updatedAt: "",
+    };
+    await h.db.collection("users").doc(user.uid).set(user as unknown as DocData);
+    await h.db.collection("players").doc(player.id).set(player as unknown as DocData);
+    await h.db.collection("attendance").doc(`${gameId}_${player.id}`).set({
+      gameId,
+      playerId: player.id,
+      status,
+      updatedAt: "",
+      updatedBy: null,
+    });
+  }
+}
+
+async function historyRecipientCount(): Promise<number> {
+  const runs = await h.db.collection("notificationRuns").get();
+  const counts = runs.docs.map(
+    (d) => d.data().recipientCount as number
+  );
+  return counts.reduce((sum, n) => sum + n, 0);
+}
+
+describe("notification audiences at dispatch", () => {
+  it("game reminder emails only the No response player and records that count", async () => {
+    await seedAudience(oct1.id);
+    await seedGame({ ...oct1, noGame: false });
+
+    await processDueNotifications({ now: reminderNow });
+
+    expect(h.sent.map((m) => m.to)).toEqual(["no_response@example.com"]);
+    expect(h.sent[0]?.text).toContain("Your current attendance: No response");
+    expect(await historyRecipientCount()).toBe(1);
+  });
+
+  it("maybe reminder emails only the Maybe player and records that count", async () => {
+    await seedAudience(oct1.id);
+    await seedGame({ ...oct1, noGame: false });
+
+    await processDueNotifications({ now: maybeNow });
+
+    expect(h.sent.map((m) => m.to)).toEqual(["maybe@example.com"]);
+    expect(h.sent[0]?.text).toContain("Maybe");
+    expect(await historyRecipientCount()).toBe(1);
+  });
+
+  it("automatic Game OFF emails only Playing and Maybe and records that count", async () => {
+    await seedAudience(oct1.id);
+    await seedGame({ ...oct1, noGame: false });
+
+    await processDueNotifications({ now: offNow });
+
+    const off = h.sent.filter((m) => m.subject === "TeamSplit — Game is OFF");
+    expect(off.map((m) => m.to).sort()).toEqual([
+      "maybe@example.com",
+      "playing@example.com",
+    ]);
+    expect(off[0]?.text).toContain("not enough confirmed players");
+    expect(off.every((m) => m.to !== "not_playing@example.com")).toBe(true);
+    expect(off.every((m) => m.to !== "no_response@example.com")).toBe(true);
+
+    const runs = await h.db.collection("notificationRuns").get();
+    const offRun = runs.docs.find(
+      (d) => d.data().notificationType === "final_status"
+    );
+    expect(offRun?.data().recipientCount).toBe(2);
+  });
+
+  it("Admin No Game OFF emails only Playing and Maybe from attendance still on the game", async () => {
+    await seedAudience(oct1.id);
+    await seedGame({ ...oct1, noGame: false });
+
+    await setGameNoGame({
+      gameId: oct1.id,
+      noGame: true,
+      updatedBy: "admin",
+    });
+
+    expect(h.sent.map((m) => m.to).sort()).toEqual([
+      "maybe@example.com",
+      "playing@example.com",
+    ]);
+    expect(h.sent.every((m) => m.subject === "TeamSplit — Game is OFF")).toBe(
+      true
+    );
+    expect(h.sent.every((m) => !m.text.includes("not enough confirmed players"))).toBe(
+      true
+    );
+    expect(await historyRecipientCount()).toBe(2);
+
+    const attendance = await h.db.collection("attendance").get();
+    expect(attendance.size).toBe(0);
   });
 });

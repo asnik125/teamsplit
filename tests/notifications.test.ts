@@ -269,6 +269,92 @@ describe("recipients", () => {
     });
     expect(recipients.map((r) => r.userId)).toEqual(["u1"]);
   });
+
+  const audienceStatuses = [
+    "playing",
+    "maybe",
+    "not_playing",
+    "no_response",
+  ] as const;
+
+  function audienceFixture() {
+    const users = audienceStatuses.map((status) =>
+      user(`u_${status}`, { playerId: `p_${status}`, displayName: status, email: `${status}@example.com` })
+    );
+    const roster: Player[] = audienceStatuses.map((status) => ({
+      id: `p_${status}`,
+      displayName: status,
+      email: null,
+      active: true,
+      linkedUid: `u_${status}`,
+      createdAt: "",
+      updatedAt: "",
+    }));
+    const attendance: AttendanceRecord[] = audienceStatuses.map((status) => ({
+      gameId: "g",
+      playerId: `p_${status}`,
+      status,
+      updatedAt: "",
+      updatedBy: null,
+    }));
+    return { users, roster, attendance };
+  }
+
+  it("game reminder goes only to No response", () => {
+    const { users, roster, attendance } = audienceFixture();
+    const { recipients, skipped } = resolveRecipients({
+      type: "game_reminder",
+      users,
+      players: roster,
+      attendance,
+    });
+    expect(recipients.map((r) => r.userId)).toEqual(["u_no_response"]);
+    expect(recipients[0]?.attendanceStatus).toBe("no_response");
+    for (const status of ["playing", "maybe", "not_playing"] as const) {
+      expect(skipped.find((s) => s.userId === `u_${status}`)?.reason).toBe(
+        "not_no_response"
+      );
+    }
+  });
+
+  it("maybe reminder goes only to Maybe", () => {
+    const { users, roster, attendance } = audienceFixture();
+    const { recipients, skipped } = resolveRecipients({
+      type: "maybe_reminder",
+      users,
+      players: roster,
+      attendance,
+    });
+    expect(recipients.map((r) => r.userId)).toEqual(["u_maybe"]);
+    expect(recipients[0]?.attendanceStatus).toBe("maybe");
+    for (const status of ["playing", "not_playing", "no_response"] as const) {
+      expect(skipped.find((s) => s.userId === `u_${status}`)?.reason).toBe(
+        "not_maybe"
+      );
+    }
+  });
+
+  it("game OFF goes only to Playing and Maybe", () => {
+    const { users, roster, attendance } = audienceFixture();
+    const { recipients, skipped } = resolveRecipients({
+      type: "final_status",
+      users,
+      players: roster,
+      attendance,
+    });
+    expect(recipients.map((r) => r.userId).sort()).toEqual([
+      "u_maybe",
+      "u_playing",
+    ]);
+    expect(
+      recipients.map((r) => r.attendanceStatus).sort()
+    ).toEqual(["maybe", "playing"]);
+    for (const status of ["not_playing", "no_response"] as const) {
+      expect(skipped.find((s) => s.userId === `u_${status}`)?.reason).toBe(
+        "not_playing_or_maybe"
+      );
+    }
+  });
 });
 
 describe("automatic Game OFF (final_status)", () => {
@@ -425,7 +511,15 @@ describe("automatic Game OFF (final_status)", () => {
       type: "final_status",
       users,
       players,
-      attendance: [],
+      attendance: [
+        {
+          gameId: "g",
+          playerId: "p1",
+          status: "playing",
+          updatedAt: "",
+          updatedBy: null,
+        },
+      ],
     });
     expect(recipients.map((r) => r.userId)).toEqual(["admin1"]);
   });

@@ -920,6 +920,26 @@ export async function setGameNoGame(input: {
       .get();
     clearedAttendance = attendanceSnap.size;
 
+    let dispatchError: unknown = null;
+    if (existing.status === "scheduled") {
+      try {
+        await dispatchGameOffNotification(
+          {
+            ...existing,
+            id: input.gameId,
+            noGame: true,
+            updatedAt: now,
+            teamsMayBeStale: false,
+            teamsStatusMessage: "No game this week",
+            lastAttendanceChange: null,
+          },
+          new Date(now)
+        );
+      } catch (err) {
+        dispatchError = err;
+      }
+    }
+
     const docs = attendanceSnap.docs;
     for (let i = 0; i < docs.length; i += 450) {
       const batch = db.batch();
@@ -951,20 +971,7 @@ export async function setGameNoGame(input: {
       lastAttendanceChange: null,
     });
 
-    if (existing.status === "scheduled") {
-      await dispatchGameOffNotification(
-        {
-          ...existing,
-          id: input.gameId,
-          noGame: true,
-          updatedAt: now,
-          teamsMayBeStale: false,
-          teamsStatusMessage: "No game this week",
-          lastAttendanceChange: null,
-        },
-        new Date(now)
-      );
-    }
+    if (dispatchError) throw dispatchError;
   } else {
     await gameRef.update({
       noGame: false,

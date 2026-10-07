@@ -293,7 +293,7 @@ function NotificationsContent() {
 
       <RuleEditor
         title="Game reminder"
-        description="Default: 1 day before at 7:00 PM — everyone with email notifications on."
+        description="Default: 1 day before at 7:00 PM — only players with No response."
         value={settings.gameReminder}
         onChange={(gameReminder) => setSettings({ ...settings, gameReminder })}
       />
@@ -305,7 +305,7 @@ function NotificationsContent() {
       />
       <RuleEditor
         title="Game OFF (2h before kickoff)"
-        description="Automatic: exactly 2 hours before kickoff (America/Vancouver). If Playing &lt; minPlayingForTeams, emails Game is OFF once. Maybe and no response do not count. Separate from Game / Maybe reminders. No ON email."
+        description="Automatic: exactly 2 hours before kickoff (America/Vancouver). If Playing &lt; minPlayingForTeams, emails Game is OFF once to Playing and Maybe only. Maybe and no response do not count toward the minimum. The same audience is used when Admin marks No Game. No ON email."
         value={settings.finalStatus}
         onChange={(finalStatus) => setSettings({ ...settings, finalStatus })}
         scheduleEditable={false}
