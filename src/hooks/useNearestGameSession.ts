@@ -230,7 +230,7 @@ export function useNearestGameSession() {
     }
   }
 
-  async function generateTeams() {
+  async function generateTeams(threeTeams = false) {
     if (!user || !teamsGameId || !showAdminUI) return;
     setError(null);
     setUpdatingTeams(true);
@@ -238,7 +238,7 @@ export function useNearestGameSession() {
       const { regenerateTeamsApi } = await import(
         "@/lib/firebase/attendance-api"
       );
-      await regenerateTeamsApi(user, teamsGameId, { threeTeams: false });
+      await regenerateTeamsApi(user, teamsGameId, { threeTeams });
       const t = await getGameTeams(getClientDb(), teamsGameId);
       setTeams(t);
       setIncludeMaybe(Boolean(t?.includeMaybePlayers));

@@ -353,6 +353,37 @@ export function createThreeTeamsControl(input: {
 }
 
 /**
+ * Checkbox value shared by desktop and mobile Admin.
+ * Below 11 eligible players it is forced off. Until the Admin toggles it,
+ * a saved teamC keeps it checked.
+ */
+export function resolveCreateThreeTeamsChecked(input: {
+  eligibleCount: number;
+  hasSavedTeamC: boolean;
+  userTouched: boolean;
+  checked: boolean;
+}): { enabled: boolean; checked: boolean } {
+  if (!canCreateThreeTeams(input.eligibleCount)) {
+    return { enabled: false, checked: false };
+  }
+  if (input.userTouched) {
+    return { enabled: true, checked: input.checked };
+  }
+  return { enabled: true, checked: input.hasSavedTeamC };
+}
+
+/** Two-team generate omits teamC so a full document replace drops a saved third roster. */
+export function gameTeamsForGenerate<T extends object>(
+  base: T,
+  teamC: TeamMemberPublic[] | undefined
+): Omit<T, "teamC"> & { teamC?: TeamMemberPublic[] } {
+  const rest = { ...base } as Omit<T, "teamC"> & { teamC?: TeamMemberPublic[] };
+  delete rest.teamC;
+  if (teamC && teamC.length > 0) rest.teamC = teamC;
+  return rest;
+}
+
+/**
  * Team sizes that differ by at most one.
  * Remainder players go to the earlier teams: 11 → 4/4/3, 13 → 5/4/4.
  */

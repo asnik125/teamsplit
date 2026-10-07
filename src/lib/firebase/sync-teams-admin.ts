@@ -41,6 +41,7 @@ import {
   buildSimpleRatedEligible,
   computeBestBalancedSplit,
   computeBestBalancedThreeWay,
+  gameTeamsForGenerate,
   MIN_ELIGIBLE_FOR_THREE_TEAMS,
   MissingEvaluationError,
 } from "../team-generate";
@@ -577,7 +578,7 @@ export async function generateTeamsExplicit(input: {
 
   const fingerprint = eligiblePoolFingerprint(eligibleIds);
   const now = nowIso();
-  const payload: GameTeams = {
+  const baseTeams: GameTeams = {
     gameId: input.gameId,
     teamA,
     teamB,
@@ -591,7 +592,7 @@ export async function generateTeamsExplicit(input: {
     stale: false,
     generatedWithRatingSystem: ratingSystem,
   };
-  if (teamC && teamC.length > 0) payload.teamC = teamC;
+  const payload = gameTeamsForGenerate(baseTeams, teamC);
   await teamsRef.set(payload);
   await gameRef.update({
     updatedAt: now,

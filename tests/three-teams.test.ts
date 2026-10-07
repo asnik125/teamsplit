@@ -6,11 +6,14 @@ import {
   visibleTeamColumns,
 } from "@/lib/player-game-view";
 import { areTeamsStale } from "@/lib/team-eligibility";
+import { isIncludedForTeams } from "@/lib/team-sync";
 import {
   CLASSIC_ODD_OVERALL_COMPENSATION,
   computeBestBalancedSplit,
   computeBestBalancedThreeWay,
   createThreeTeamsControl,
+  gameTeamsForGenerate,
+  resolveCreateThreeTeamsChecked,
   scorePartition,
   threeTeamSizes,
 } from "@/lib/team-generate";
@@ -85,6 +88,61 @@ describe("Create 3 teams control", () => {
     expect(
       createThreeTeamsControl({ eligibleCount: 11, checked: true })
     ).toEqual({ enabled: true, checked: true });
+  });
+
+  it("enables as soon as the 11th Playing player arrives, including Maybe only when requested", () => {
+    const playing = (count: number) =>
+      Array.from({ length: count }, () => "playing" as const);
+    const eligible = (
+      statuses: Array<"playing" | "maybe" | "not_playing">,
+      includeMaybe: boolean
+    ) => statuses.filter((status) => isIncludedForTeams(status, includeMaybe)).length;
+
+    expect(
+      resolveCreateThreeTeamsChecked({
+        eligibleCount: eligible(playing(10), false),
+        hasSavedTeamC: false,
+        userTouched: false,
+        checked: false,
+      })
+    ).toEqual({ enabled: false, checked: false });
+
+    expect(
+      resolveCreateThreeTeamsChecked({
+        eligibleCount: eligible(playing(11), false),
+        hasSavedTeamC: false,
+        userTouched: false,
+        checked: false,
+      })
+    ).toEqual({ enabled: true, checked: false });
+
+    expect(eligible([...playing(10), "maybe"], false)).toBe(10);
+    expect(
+      resolveCreateThreeTeamsChecked({
+        eligibleCount: eligible([...playing(10), "maybe"], true),
+        hasSavedTeamC: false,
+        userTouched: false,
+        checked: false,
+      }).enabled
+    ).toBe(true);
+
+    expect(
+      resolveCreateThreeTeamsChecked({
+        eligibleCount: 11,
+        hasSavedTeamC: true,
+        userTouched: false,
+        checked: false,
+      })
+    ).toEqual({ enabled: true, checked: true });
+
+    expect(
+      resolveCreateThreeTeamsChecked({
+        eligibleCount: 12,
+        hasSavedTeamC: true,
+        userTouched: true,
+        checked: false,
+      })
+    ).toEqual({ enabled: true, checked: false });
   });
 });
 
@@ -166,6 +224,23 @@ describe("three-team sizes and balance", () => {
       [best.teamA, best.teamB, best.teamC],
       rated.map((player) => player.id)
     );
+  });
+
+  it("drops persisted teamC when Generate runs in two-team mode", () => {
+    const base = {
+      gameId: "g1",
+      teamA: [member("a1")],
+      teamB: [member("b1")],
+    };
+    const three = gameTeamsForGenerate(base, [member("c1")]);
+    expect(three.teamC?.map((player) => player.playerId)).toEqual(["c1"]);
+    const two = gameTeamsForGenerate(base, undefined);
+    expect(two).not.toHaveProperty("teamC");
+    const cleared = gameTeamsForGenerate(
+      { ...base, teamC: [member("c1")] },
+      undefined
+    );
+    expect(cleared).not.toHaveProperty("teamC");
   });
 
   it("keeps the existing two-team split, including Classic odd compensation", () => {
@@ -371,10 +446,20 @@ describe("player and mobile team columns", () => {
       "src/app/admin/games/[gameId]/teams/page.tsx",
       "utf8"
     );
+    const session = readFileSync(
+      "src/hooks/useNearestGameSession.ts",
+      "utf8"
+    );
     expect(playerMobile).toContain("visibleTeamColumns");
     expect(playerMobile).not.toContain("Create 3 teams");
+    expect(playerMobile).not.toContain("generateTeams");
     expect(adminMobile).toContain("teamC={session.teamsView.teamC}");
-    expect(adminMobile).not.toContain("Create 3 teams");
+    expect(adminMobile).toContain("Create 3 teams");
+    expect(adminMobile).toContain("session.generateTeams(threeControl.checked)");
+    expect(adminMobile).not.toContain("Team rating system");
+    expect(session).toContain(
+      "regenerateTeamsApi(user, teamsGameId, { threeTeams })"
+    );
     expect(desktop).toContain("Create 3 teams");
     expect(desktop).toContain("showTeamRatingSystem");
     expect(teamBuilder).toContain('rosterTeamLabel("C")');

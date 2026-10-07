@@ -54,7 +54,7 @@ import {
 } from "@/lib/balancer";
 import {
   createThreeTeamsControl,
-  MIN_ELIGIBLE_FOR_THREE_TEAMS,
+  resolveCreateThreeTeamsChecked,
 } from "@/lib/team-generate";
 
 const STATUS_OPTIONS: {
@@ -864,14 +864,14 @@ function TeamsBody({
   }, [game.id]);
 
   useEffect(() => {
-    if (view.includedCount < MIN_ELIGIBLE_FOR_THREE_TEAMS) {
-      setCreateThreeTeams(false);
-      return;
-    }
-    if (!threeTeamsTouched.current) {
-      setCreateThreeTeams(rosterKey.length > 0);
-    }
-  }, [game.id, rosterKey, view.includedCount]);
+    const next = resolveCreateThreeTeamsChecked({
+      eligibleCount: view.includedCount,
+      hasSavedTeamC: rosterKey.length > 0,
+      userTouched: threeTeamsTouched.current,
+      checked: createThreeTeams,
+    });
+    setCreateThreeTeams(next.checked);
+  }, [game.id, rosterKey, view.includedCount, createThreeTeams]);
 
   function onDropTo(side: "A" | "B" | "C") {
     if (!isAdmin || !dragId || !view.showTeamLists) return;

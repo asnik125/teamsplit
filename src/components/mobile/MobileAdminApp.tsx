@@ -20,6 +20,10 @@ import {
   type TeamBuilderFrame,
 } from "@/lib/mobile-nav";
 import { useAuth } from "@/lib/firebase/auth-context";
+import {
+  createThreeTeamsControl,
+  resolveCreateThreeTeamsChecked,
+} from "@/lib/team-generate";
 
 export function MobileAdminApp({
   initialTab = defaultAdminMobileTab(),
@@ -196,6 +200,28 @@ function MobileAdminTeamBuilder() {
     defaultTeamBuilderFrame()
   );
   const dragActiveRef = useRef(false);
+  const threeTeamsTouched = useRef(false);
+  const [createThreeTeams, setCreateThreeTeams] = useState(false);
+  const includedCount = session.teamsView?.includedCount ?? 0;
+  const hasSavedTeamC = (session.teamsView?.teamC.length ?? 0) > 0;
+  const threeControl = createThreeTeamsControl({
+    eligibleCount: includedCount,
+    checked: createThreeTeams,
+  });
+
+  useEffect(() => {
+    threeTeamsTouched.current = false;
+  }, [session.teamsGameId]);
+
+  useEffect(() => {
+    const next = resolveCreateThreeTeamsChecked({
+      eligibleCount: includedCount,
+      hasSavedTeamC,
+      userTouched: threeTeamsTouched.current,
+      checked: createThreeTeams,
+    });
+    setCreateThreeTeams(next.checked);
+  }, [session.teamsGameId, includedCount, hasSavedTeamC, createThreeTeams]);
   const swipe = useSwipeFrames({
     enabled: true,
     dragActiveRef,
@@ -263,6 +289,20 @@ function MobileAdminTeamBuilder() {
                 </label>
               )}
               {session.showAdminUI ? (
+                <label className="m-setting-row">
+                  <span>Create 3 teams</span>
+                  <input
+                    type="checkbox"
+                    checked={threeControl.checked}
+                    disabled={!threeControl.enabled || session.updatingTeams}
+                    onChange={(e) => {
+                      threeTeamsTouched.current = true;
+                      setCreateThreeTeams(e.target.checked);
+                    }}
+                  />
+                </label>
+              ) : null}
+              {session.showAdminUI ? (
                 <div className="m-teams-actions">
                   <button
                     type="button"
@@ -271,7 +311,9 @@ function MobileAdminTeamBuilder() {
                       session.updatingTeams ||
                       session.teamsView?.teamsPhase === "insufficient"
                     }
-                    onClick={() => session.generateTeams()}
+                    onClick={() =>
+                      session.generateTeams(threeControl.checked)
+                    }
                   >
                     {session.updatingTeams ? "Working…" : "Generate Teams"}
                   </button>
