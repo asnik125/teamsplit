@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
 
   const { uid } = auth as { uid: string };
 
-  let body: { gameId?: string };
+  let body: { gameId?: string; threeTeams?: boolean };
   try {
     body = await req.json();
   } catch {
@@ -48,6 +48,7 @@ export async function POST(req: NextRequest) {
     const result = await generateTeamsExplicit({
       gameId,
       updatedBy: uid,
+      threeTeams: body.threeTeams === true,
     });
     return NextResponse.json({
       ok: true,
@@ -62,7 +63,9 @@ export async function POST(req: NextRequest) {
         ? String((e as { code: string }).code)
         : null;
     const status =
-      code === "insufficient_players" || code === "missing_evaluation"
+      code === "insufficient_players" ||
+      code === "missing_evaluation" ||
+      code === "three_teams_unavailable"
         ? 400
         : 500;
     return NextResponse.json({ error: msg, code }, { status });

@@ -16,6 +16,7 @@ import {
   MOBILE_HOME_EVENT,
   type PlayerMobileFrame,
 } from "@/lib/mobile-nav";
+import { visibleTeamColumns } from "@/lib/player-game-view";
 import type { AttendanceStatus } from "@/lib/types";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
@@ -202,29 +203,27 @@ export function MobilePlayerApp({
               />
               <p className="m-muted">{session.teamsView.confirmedLabel}</p>
               {session.teamsView.showTeamLists ? (
-                <div className="m-team-split m-team-split-readonly">
-                  <div className="m-team-col m-team-col-a">
-                    <p className="m-team-col-title">Team A</p>
-                    <ul className="m-team-list">
-                      {session.teamsView.teamA.map((m) => (
-                        <li key={m.playerId} className="m-team-chip">
-                          {m.displayName}
-                          {m.maybe ? " (Maybe)" : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                  <div className="m-team-col m-team-col-b">
-                    <p className="m-team-col-title">Team B</p>
-                    <ul className="m-team-list">
-                      {session.teamsView.teamB.map((m) => (
-                        <li key={m.playerId} className="m-team-chip">
-                          {m.displayName}
-                          {m.maybe ? " (Maybe)" : ""}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
+                <div
+                  className={`m-team-split m-team-split-readonly${
+                    session.teamsView.teamC.length > 0 ? " m-team-split-3" : ""
+                  }`}
+                >
+                  {visibleTeamColumns(session.teamsView).map((column) => (
+                    <div
+                      key={column.side}
+                      className={`m-team-col m-team-col-${column.side.toLowerCase()}`}
+                    >
+                      <p className="m-team-col-title">{column.title}</p>
+                      <ul className="m-team-list">
+                        {column.members.map((m) => (
+                          <li key={m.playerId} className="m-team-chip">
+                            {m.displayName}
+                            {m.maybe ? " (Maybe)" : ""}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
                 </div>
               ) : (
                 <p className="m-muted">{session.teamsView.teamsMessage}</p>

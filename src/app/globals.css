@@ -841,6 +841,10 @@ body {
   margin-top: 0.55rem;
 }
 
+.teams-columns-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .teams-col-title {
   margin: 0 0 0.35rem;
   font-size: 0.8rem;
@@ -853,6 +857,10 @@ body {
 
 .teams-col-b {
   color: #c084fc;
+}
+
+.teams-col-c {
+  color: #fbbf24;
 }
 
 .teams-list {
@@ -1521,6 +1529,10 @@ body {
   align-items: start;
 }
 
+.m-team-split-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
 .m-team-col {
   background: var(--bg-card);
   border: 1px solid var(--border);
@@ -1534,6 +1546,9 @@ body {
 }
 .m-team-col-b {
   border-top: 3px solid #ef4444;
+}
+.m-team-col-c {
+  border-top: 3px solid #f59e0b;
 }
 .m-team-col-hover {
   outline: 2px solid var(--accent-blue);

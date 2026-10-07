@@ -54,6 +54,28 @@ describe("buildPlayerGameView", () => {
     expect(v.teamsMessage).toBe("Teams ready");
     expect(v.showTeamLists).toBe(true);
     expect(v.confirmedLabel).toBe("5 confirmed + 1 maybe");
+    expect(v.myTeamLabel).toBe("Team Black");
+  });
+
+  it("names the two sides Team Black and Team White", () => {
+    const onBlack = buildPlayerGameView({
+      myStatus: "playing",
+      myPlayerId: "p1",
+      playingCount: 5,
+      maybeCount: 1,
+      includedCount: 6,
+      currentTeams: teams(),
+    });
+    const onWhite = buildPlayerGameView({
+      myStatus: "playing",
+      myPlayerId: "p3",
+      playingCount: 5,
+      maybeCount: 1,
+      includedCount: 6,
+      currentTeams: teams(),
+    });
+    expect(onBlack.myTeamLabel).toBe("Team Black");
+    expect(onWhite.myTeamLabel).toBe("Team White");
   });
 
   it("ready with only playing omits maybe and never shows / minPlaying", () => {

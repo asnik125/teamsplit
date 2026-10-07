@@ -105,6 +105,37 @@ export function assertValidTeamSplit(
   }
 }
 
+/** Same membership rules as assertValidTeamSplit, for two or three teams. */
+export function assertValidTeamGroups(
+  eligibleIds: Iterable<string>,
+  groups: { id?: string; playerId?: string }[][]
+): void {
+  const eligible = [...new Set([...eligibleIds])].sort();
+  const idOf = (m: { id?: string; playerId?: string }) => m.id ?? m.playerId ?? "";
+  const assigned = groups.flat().map(idOf).filter(Boolean);
+  const unique = new Set(assigned);
+
+  if (unique.size !== assigned.length) {
+    throw new Error("Duplicate players detected across teams");
+  }
+  if (assigned.length !== eligible.length) {
+    throw new Error(
+      `Team membership size mismatch: ${assigned.length} assigned vs ${eligible.length} eligible`
+    );
+  }
+  const sortedAssigned = [...assigned].sort();
+  for (let i = 0; i < eligible.length; i++) {
+    if (sortedAssigned[i] !== eligible[i]) {
+      throw new Error("Team membership does not match eligible player set");
+    }
+  }
+  const sizes = groups.map((g) => g.length);
+  const spread = Math.max(...sizes) - Math.min(...sizes);
+  if (spread > 1) {
+    throw new Error(`Unbalanced team sizes: ${sizes.join(" / ")}`);
+  }
+}
+
 export function teamStrength(players: { overall: number }[]): number {
   return Number(players.reduce((sum, p) => sum + p.overall, 0).toFixed(1));
 }
@@ -232,6 +263,62 @@ export function moveMemberKeepingSizeBalance(
   }
 
   return { teamA: nextA, teamB: nextB };
+}
+
+export type ThreeTeamSlot = "A" | "B" | "C";
+
+/**
+ * Move a player among three teams. A pure move is kept when sizes still
+ * differ by at most one. Otherwise the first other player on the destination
+ * is swapped back, matching the two-team drag rule.
+ */
+export function moveMemberAmongThreeTeams(
+  teamA: TeamMemberPublic[],
+  teamB: TeamMemberPublic[],
+  teamC: TeamMemberPublic[],
+  playerId: string,
+  to: ThreeTeamSlot
+): {
+  teamA: TeamMemberPublic[];
+  teamB: TeamMemberPublic[];
+  teamC: TeamMemberPublic[];
+} {
+  const buckets: Record<ThreeTeamSlot, TeamMemberPublic[]> = {
+    A: [...teamA],
+    B: [...teamB],
+    C: [...teamC],
+  };
+  let from: ThreeTeamSlot | null = null;
+  let player: TeamMemberPublic | undefined;
+  for (const side of ["A", "B", "C"] as const) {
+    const found = buckets[side].find((m) => m.playerId === playerId);
+    if (found) {
+      from = side;
+      player = found;
+    }
+  }
+  if (!from || !player) {
+    throw new Error(`Player ${playerId} not found on any team`);
+  }
+  if (from === to) {
+    return { teamA, teamB, teamC };
+  }
+
+  buckets[from] = buckets[from].filter((m) => m.playerId !== playerId);
+  buckets[to] = [...buckets[to], player];
+
+  const sizes = (["A", "B", "C"] as const).map((side) => buckets[side].length);
+  if (Math.max(...sizes) - Math.min(...sizes) <= 1) {
+    return { teamA: buckets.A, teamB: buckets.B, teamC: buckets.C };
+  }
+
+  const swap = buckets[to].find((m) => m.playerId !== playerId);
+  if (!swap) {
+    throw new Error("Cannot keep team sizes within one player");
+  }
+  buckets[to] = buckets[to].filter((m) => m.playerId !== swap.playerId);
+  buckets[from] = [...buckets[from], swap];
+  return { teamA: buckets.A, teamB: buckets.B, teamC: buckets.C };
 }
 
 export function toPublicMembers(

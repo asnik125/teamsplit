@@ -23,11 +23,18 @@ import {
   assertNoDuplicatePlayers,
   autoRebalanceAfterMove,
   calculateOverall,
+  moveMemberAmongThreeTeams,
   movePlayerBetweenTeams,
   teamStrength,
   toPublicMembers,
 } from "@/lib/balancer";
-import { computeBestBalancedSplit } from "@/lib/team-generate";
+import { rosterTeamLabel, teamDisplayName } from "@/lib/player-game-view";
+import {
+  computeBestBalancedSplit,
+  computeBestBalancedThreeWay,
+  createThreeTeamsControl,
+  MIN_ELIGIBLE_FOR_THREE_TEAMS,
+} from "@/lib/team-generate";
 import type {
   Game,
   GameTeams,
@@ -65,6 +72,8 @@ function TeamBuilderContent() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [teamA, setTeamA] = useState<RatedPlayer[]>([]);
   const [teamB, setTeamB] = useState<RatedPlayer[]>([]);
+  const [teamC, setTeamC] = useState<RatedPlayer[]>([]);
+  const [createThreeTeams, setCreateThreeTeams] = useState(false);
   const [published, setPublished] = useState(false);
   const [manuallyAdjusted, setManuallyAdjusted] = useState(false);
   const [includeMaybePlayers, setIncludeMaybePlayers] = useState(false);
@@ -113,12 +122,17 @@ function TeamBuilderContent() {
           .filter(Boolean) as RatedPlayer[];
       setTeamA(hydrate(teams.teamA));
       setTeamB(hydrate(teams.teamB));
+      const hydratedC = hydrate(teams.teamC ?? []);
+      setTeamC(hydratedC);
+      setCreateThreeTeams(hydratedC.length > 0);
       setPublished(teams.published);
       setManuallyAdjusted(Boolean(teams.manuallyAdjusted));
       setIncludeMaybePlayers(Boolean(teams.includeMaybePlayers));
     } else {
       setTeamA([]);
       setTeamB([]);
+      setTeamC([]);
+      setCreateThreeTeams(false);
       setPublished(false);
       setManuallyAdjusted(false);
       setIncludeMaybePlayers(false);
@@ -136,6 +150,16 @@ function TeamBuilderContent() {
   }, [players, evals]);
 
   const playingCount = selected.size;
+  const threeControl = createThreeTeamsControl({
+    eligibleCount: selected.size,
+    checked: createThreeTeams,
+  });
+
+  useEffect(() => {
+    if (selected.size < MIN_ELIGIBLE_FOR_THREE_TEAMS) {
+      setCreateThreeTeams(false);
+    }
+  }, [selected.size]);
 
   function togglePlayer(id: string) {
     setSelected((prev) => {
@@ -168,22 +192,60 @@ function TeamBuilderContent() {
       return;
     }
     try {
-      const { teamA: pubA, teamB: pubB } = computeBestBalancedSplit({
-        rated: pool,
-        maybePlayerIds: new Set(),
-      });
       const byId = new Map(pool.map((p) => [p.id, p]));
-      const a = pubA
-        .map((m) => byId.get(m.playerId))
-        .filter(Boolean) as RatedPlayer[];
-      const b = pubB
-        .map((m) => byId.get(m.playerId))
-        .filter(Boolean) as RatedPlayer[];
-      assertNoDuplicatePlayers(a, b);
-      setTeamA(a);
-      setTeamB(b);
+      const hydrateSide = (members: { playerId: string }[]) =>
+        members
+          .map((m) => byId.get(m.playerId))
+          .filter(Boolean) as RatedPlayer[];
+      if (threeControl.checked) {
+        const best = computeBestBalancedThreeWay({
+          rated: pool,
+          maybePlayerIds: new Set(),
+        });
+        setTeamA(hydrateSide(best.teamA));
+        setTeamB(hydrateSide(best.teamB));
+        setTeamC(hydrateSide(best.teamC));
+      } else {
+        const { teamA: pubA, teamB: pubB } = computeBestBalancedSplit({
+          rated: pool,
+          maybePlayerIds: new Set(),
+        });
+        const a = hydrateSide(pubA);
+        const b = hydrateSide(pubB);
+        assertNoDuplicatePlayers(a, b);
+        setTeamA(a);
+        setTeamB(b);
+        setTeamC([]);
+      }
       setManuallyAdjusted(false);
       setMessage("Teams generated (draft). Publish when ready.");
+      if (published) setNeedsRepublish(true);
+    } catch (e) {
+      setError(formatUnknownError(e));
+    }
+  }
+
+  function moveAmong(playerId: string, to: "A" | "B" | "C") {
+    setError(null);
+    try {
+      const byId = new Map(
+        [...teamA, ...teamB, ...teamC].map((p) => [p.id, p])
+      );
+      const next = moveMemberAmongThreeTeams(
+        toPublicMembers(teamA),
+        toPublicMembers(teamB),
+        toPublicMembers(teamC),
+        playerId,
+        to
+      );
+      const hydrateSide = (members: { playerId: string }[]) =>
+        members
+          .map((m) => byId.get(m.playerId))
+          .filter(Boolean) as RatedPlayer[];
+      setTeamA(hydrateSide(next.teamA));
+      setTeamB(hydrateSide(next.teamB));
+      setTeamC(hydrateSide(next.teamC));
+      setManuallyAdjusted(true);
       if (published) setNeedsRepublish(true);
     } catch (e) {
       setError(formatUnknownError(e));
@@ -209,7 +271,7 @@ function TeamBuilderContent() {
 
   async function persist(publish: boolean) {
     if (!user || !game) return;
-    if (teamA.length + teamB.length < 2) {
+    if (teamA.length + teamB.length + teamC.length < 2) {
       setError("Nothing to save.");
       return;
     }
@@ -219,6 +281,7 @@ function TeamBuilderContent() {
       gameId,
       teamA: toPublicMembers(teamA),
       teamB: toPublicMembers(teamB),
+      ...(teamC.length > 0 ? { teamC: toPublicMembers(teamC) } : {}),
       published: publish,
       publishedAt: publish ? now : null,
       updatedAt: now,
@@ -264,6 +327,7 @@ function TeamBuilderContent() {
       gameId,
       teamA: toPublicMembers(teamA),
       teamB: toPublicMembers(teamB),
+      ...(teamC.length > 0 ? { teamC: toPublicMembers(teamC) } : {}),
       published: false,
       publishedAt: null,
       updatedAt: now,
@@ -304,7 +368,9 @@ function TeamBuilderContent() {
     setError(null);
     setMessage(null);
     try {
-      const result = await regenerateTeamsApi(user, gameId);
+      const result = await regenerateTeamsApi(user, gameId, {
+        threeTeams: threeControl.checked,
+      });
       setMessage(result.message);
       await reloadMeta();
     } catch (e) {
@@ -422,6 +488,15 @@ function TeamBuilderContent() {
           ))}
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-3">
+          <label className="flex items-center gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={threeControl.checked}
+              disabled={!threeControl.enabled || busy}
+              onChange={(e) => setCreateThreeTeams(e.target.checked)}
+            />
+            Create 3 teams
+          </label>
           <label className="flex flex-wrap items-center gap-2 text-sm">
             <span className="text-slate-400">Team rating system</span>
             <select
@@ -454,33 +529,67 @@ function TeamBuilderContent() {
         </div>
       </div>
 
-      {(teamA.length > 0 || teamB.length > 0) && (
-        <div className="mt-4 grid gap-4 md:grid-cols-2">
-          <TeamColumn
-            title="Team A"
-            color="text-blue-400"
-            players={teamA}
-            strength={teamStrength(teamA)}
-            onMove={(id) => moveTo(id, "B", false)}
-            onMoveRebalance={(id) => moveTo(id, "B", true)}
-            moveLabel="→ B"
-          />
-          <TeamColumn
-            title="Team B"
-            color="text-purple-400"
-            players={teamB}
-            strength={teamStrength(teamB)}
-            onMove={(id) => moveTo(id, "A", false)}
-            onMoveRebalance={(id) => moveTo(id, "A", true)}
-            moveLabel="→ A"
-          />
-        </div>
-      )}
+      {(teamA.length > 0 || teamB.length > 0 || teamC.length > 0) &&
+        (teamC.length > 0 ? (
+          <div className="mt-4 grid gap-4 md:grid-cols-3">
+            <TeamColumn
+              title={rosterTeamLabel("A")}
+              color="text-blue-400"
+              players={teamA}
+              strength={teamStrength(teamA)}
+              onMove={(id) => moveAmong(id, "B")}
+              onMoveRebalance={(id) => moveAmong(id, "C")}
+              moveLabel="→ White"
+              rebalanceLabel="→ Red"
+            />
+            <TeamColumn
+              title={rosterTeamLabel("B")}
+              color="text-purple-400"
+              players={teamB}
+              strength={teamStrength(teamB)}
+              onMove={(id) => moveAmong(id, "A")}
+              onMoveRebalance={(id) => moveAmong(id, "C")}
+              moveLabel="→ Black"
+              rebalanceLabel="→ Red"
+            />
+            <TeamColumn
+              title={rosterTeamLabel("C")}
+              color="text-red-400"
+              players={teamC}
+              strength={teamStrength(teamC)}
+              onMove={(id) => moveAmong(id, "A")}
+              onMoveRebalance={(id) => moveAmong(id, "B")}
+              moveLabel="→ Black"
+              rebalanceLabel="→ White"
+            />
+          </div>
+        ) : (
+          <div className="mt-4 grid gap-4 md:grid-cols-2">
+            <TeamColumn
+              title={teamDisplayName("A")}
+              color="text-blue-400"
+              players={teamA}
+              strength={teamStrength(teamA)}
+              onMove={(id) => moveTo(id, "B", false)}
+              onMoveRebalance={(id) => moveTo(id, "B", true)}
+              moveLabel="→ White"
+            />
+            <TeamColumn
+              title={teamDisplayName("B")}
+              color="text-purple-400"
+              players={teamB}
+              strength={teamStrength(teamB)}
+              onMove={(id) => moveTo(id, "A", false)}
+              onMoveRebalance={(id) => moveTo(id, "A", true)}
+              moveLabel="→ Black"
+            />
+          </div>
+        ))}
 
       {message && <p className="mt-3 text-sm text-green-400">{message}</p>}
       {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
 
-      {(teamA.length > 0 || teamB.length > 0) && (
+      {(teamA.length > 0 || teamB.length > 0 || teamC.length > 0) && (
         <div className="mt-4 flex flex-wrap gap-2">
           <button
             type="button"
@@ -515,6 +624,7 @@ function TeamColumn({
   onMove,
   onMoveRebalance,
   moveLabel,
+  rebalanceLabel = "Move + auto-swap",
 }: {
   title: string;
   color: string;
@@ -523,6 +633,7 @@ function TeamColumn({
   onMove: (id: string) => void;
   onMoveRebalance: (id: string) => void;
   moveLabel: string;
+  rebalanceLabel?: string;
 }) {
   return (
     <div className="card min-h-[200px]">
@@ -557,7 +668,9 @@ function TeamColumn({
                 className="btn btn-secondary"
                 onClick={() => onMoveRebalance(p.id)}
               >
-                Move + auto-swap
+                {rebalanceLabel === "Move + auto-swap"
+                  ? rebalanceLabel
+                  : `Move ${rebalanceLabel}`}
               </button>
             </div>
           </li>

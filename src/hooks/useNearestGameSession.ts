@@ -238,7 +238,7 @@ export function useNearestGameSession() {
       const { regenerateTeamsApi } = await import(
         "@/lib/firebase/attendance-api"
       );
-      await regenerateTeamsApi(user, teamsGameId);
+      await regenerateTeamsApi(user, teamsGameId, { threeTeams: false });
       const t = await getGameTeams(getClientDb(), teamsGameId);
       setTeams(t);
       setIncludeMaybe(Boolean(t?.includeMaybePlayers));
@@ -251,17 +251,20 @@ export function useNearestGameSession() {
 
   async function persistManualTeams(
     teamA: TeamMemberPublic[],
-    teamB: TeamMemberPublic[]
+    teamB: TeamMemberPublic[],
+    teamC?: TeamMemberPublic[]
   ) {
     if (!user || !teamsGameId || !showAdminUI) return;
     setError(null);
     try {
-      await saveManualTeamsApi(user, teamsGameId, teamA, teamB);
-      setTeams((cur) =>
-        cur
-          ? { ...cur, teamA, teamB, manuallyAdjusted: true }
-          : cur
-      );
+      await saveManualTeamsApi(user, teamsGameId, teamA, teamB, teamC);
+      setTeams((cur) => {
+        if (!cur) return cur;
+        const next = { ...cur, teamA, teamB, manuallyAdjusted: true };
+        if (teamC && teamC.length > 0) next.teamC = teamC;
+        else delete next.teamC;
+        return next;
+      });
     } catch (e) {
       setError(formatUnknownError(e));
       const t = await getGameTeams(getClientDb(), teamsGameId);

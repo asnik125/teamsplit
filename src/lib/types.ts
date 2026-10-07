@@ -191,10 +191,43 @@ export function sanitizeTeamMembers(list: unknown): TeamMemberPublic[] {
   return out;
 }
 
+/**
+ * Load a stored gameTeams document.
+ * Two-team saves (no teamC, or an empty array) stay two-team games.
+ */
+export function normalizeStoredGameTeams(
+  gameId: string,
+  data: Partial<GameTeams> | null | undefined
+): GameTeams {
+  const raw = data ?? {};
+  const teamC = sanitizeTeamMembers(raw.teamC);
+  const teams: GameTeams = {
+    gameId,
+    teamA: sanitizeTeamMembers(raw.teamA),
+    teamB: sanitizeTeamMembers(raw.teamB),
+    published: Boolean(raw.published),
+    publishedAt: raw.publishedAt ?? null,
+    updatedAt: typeof raw.updatedAt === "string" ? raw.updatedAt : "",
+    updatedBy: raw.updatedBy ?? null,
+    manuallyAdjusted: Boolean(raw.manuallyAdjusted),
+    includeMaybePlayers: Boolean(raw.includeMaybePlayers),
+    stale: Boolean(raw.stale),
+    eligibleFingerprint: raw.eligibleFingerprint ?? null,
+    generatedWithRatingSystem: raw.generatedWithRatingSystem ?? null,
+  };
+  if (teamC.length > 0) teams.teamC = teamC;
+  return teams;
+}
+
 export interface GameTeams {
   gameId: string;
   teamA: TeamMemberPublic[];
   teamB: TeamMemberPublic[];
+  /**
+   * Optional third roster. Missing or empty means a two-team game.
+   * Existing saved games omit this field and stay valid.
+   */
+  teamC?: TeamMemberPublic[];
   published: boolean;
   publishedAt: string | null;
   updatedAt: string;

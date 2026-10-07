@@ -1,4 +1,5 @@
 import {
+  assertValidTeamGroups,
   assertValidTeamSplit,
   teamSizeDiff,
 } from "../balancer";
@@ -39,6 +40,8 @@ import {
   buildRatedEligible,
   buildSimpleRatedEligible,
   computeBestBalancedSplit,
+  computeBestBalancedThreeWay,
+  MIN_ELIGIBLE_FOR_THREE_TEAMS,
   MissingEvaluationError,
 } from "../team-generate";
 import { dispatchGameOffNotification } from "../notifications/process";
@@ -431,6 +434,8 @@ export interface GenerateTeamsResult {
 export async function generateTeamsExplicit(input: {
   gameId: string;
   updatedBy: string | null;
+  /** When true, balance three teams. Omitted or false keeps the two-team split. */
+  threeTeams?: boolean;
 }): Promise<GenerateTeamsResult> {
   const db = getAdminDb();
   const gameRef = db.collection("games").doc(input.gameId);
@@ -501,8 +506,16 @@ export async function generateTeamsExplicit(input: {
   );
 
   const ratingSystem = settings.teamRatingSystem;
+  const threeTeams = Boolean(input.threeTeams);
+  if (threeTeams && eligibleIds.length < MIN_ELIGIBLE_FOR_THREE_TEAMS) {
+    throw Object.assign(
+      new Error("Create 3 teams requires 11 or more eligible players"),
+      { code: "three_teams_unavailable" }
+    );
+  }
   let teamA;
   let teamB;
+  let teamC: TeamMemberPublic[] | undefined;
   try {
     if (ratingSystem === "simple") {
       const { rated } = buildSimpleRatedEligible({
@@ -511,15 +524,26 @@ export async function generateTeamsExplicit(input: {
         evalMap: simpleEvalMap,
         maybePlayerIds,
       });
-      const best = computeBestBalancedSplit({
-        rated,
-        maybePlayerIds,
-        dimensionKeys: SIMPLE_RATING_KEYS,
-        // Simple keeps uncompensated Overall gap (Classic-only odd 20%).
-        oddTeamOverallCompensation: 0,
-      });
-      teamA = best.teamA;
-      teamB = best.teamB;
+      if (threeTeams) {
+        const best = computeBestBalancedThreeWay({
+          rated,
+          maybePlayerIds,
+          dimensionKeys: SIMPLE_RATING_KEYS,
+        });
+        teamA = best.teamA;
+        teamB = best.teamB;
+        teamC = best.teamC;
+      } else {
+        const best = computeBestBalancedSplit({
+          rated,
+          maybePlayerIds,
+          dimensionKeys: SIMPLE_RATING_KEYS,
+          // Simple keeps uncompensated Overall gap (Classic-only odd 20%).
+          oddTeamOverallCompensation: 0,
+        });
+        teamA = best.teamA;
+        teamB = best.teamB;
+      }
     } else {
       const { rated } = buildRatedEligible({
         eligibleIds,
@@ -527,12 +551,22 @@ export async function generateTeamsExplicit(input: {
         evalMap,
         maybePlayerIds,
       });
-      const best = computeBestBalancedSplit({
-        rated,
-        maybePlayerIds,
-      });
-      teamA = best.teamA;
-      teamB = best.teamB;
+      if (threeTeams) {
+        const best = computeBestBalancedThreeWay({
+          rated,
+          maybePlayerIds,
+        });
+        teamA = best.teamA;
+        teamB = best.teamB;
+        teamC = best.teamC;
+      } else {
+        const best = computeBestBalancedSplit({
+          rated,
+          maybePlayerIds,
+        });
+        teamA = best.teamA;
+        teamB = best.teamB;
+      }
     }
   } catch (e) {
     if (e instanceof MissingEvaluationError) {
@@ -557,6 +591,7 @@ export async function generateTeamsExplicit(input: {
     stale: false,
     generatedWithRatingSystem: ratingSystem,
   };
+  if (teamC && teamC.length > 0) payload.teamC = teamC;
   await teamsRef.set(payload);
   await gameRef.update({
     updatedAt: now,
@@ -688,16 +723,24 @@ export async function saveManualTeams(input: {
   gameId: string;
   teamA: TeamMemberPublic[];
   teamB: TeamMemberPublic[];
+  teamC?: TeamMemberPublic[];
   updatedBy: string | null;
 }): Promise<void> {
   await assertAdminCanOperateTeamsOnGame(input.gameId);
-  if (teamSizeDiff(input.teamA, input.teamB) > 1) {
-    throw new Error(
-      `Unbalanced team sizes: ${input.teamA.length} vs ${input.teamB.length}`
-    );
+  const teamC = input.teamC?.length ? input.teamC : undefined;
+  const ids = [...input.teamA, ...input.teamB, ...(teamC ?? [])].map(
+    (m) => m.playerId
+  );
+  if (teamC) {
+    assertValidTeamGroups(ids, [input.teamA, input.teamB, teamC]);
+  } else {
+    if (teamSizeDiff(input.teamA, input.teamB) > 1) {
+      throw new Error(
+        `Unbalanced team sizes: ${input.teamA.length} vs ${input.teamB.length}`
+      );
+    }
+    assertValidTeamSplit(ids, input.teamA, input.teamB);
   }
-  const ids = [...input.teamA, ...input.teamB].map((m) => m.playerId);
-  assertValidTeamSplit(ids, input.teamA, input.teamB);
 
   const db = getAdminDb();
   const [gameSnap, playersSnap, attendanceSnap, teamsSnap] = await Promise.all([
@@ -734,7 +777,7 @@ export async function saveManualTeams(input: {
 
   const fingerprint = eligiblePoolFingerprint([...eligible]);
   const now = nowIso();
-  await db.collection("gameTeams").doc(input.gameId).set({
+  const saved: GameTeams = {
     gameId: input.gameId,
     teamA: input.teamA,
     teamB: input.teamB,
@@ -746,7 +789,9 @@ export async function saveManualTeams(input: {
     includeMaybePlayers: includeMaybe,
     eligibleFingerprint: fingerprint,
     stale: false,
-  } satisfies GameTeams);
+  };
+  if (teamC) saved.teamC = teamC;
+  await db.collection("gameTeams").doc(input.gameId).set(saved);
   await db.collection("games").doc(input.gameId).update({
     updatedAt: now,
     teamsMayBeStale: false,

@@ -55,11 +55,14 @@ export type TeamsIntegrityResult =
 export function nearestTeamsIntegrity(input: {
   teamA: { playerId: string }[];
   teamB: { playerId: string }[];
+  teamC?: { playerId: string }[];
   eligibleIds: string[];
   minPlaying: number;
 }): TeamsIntegrityResult {
   const eligible = new Set(input.eligibleIds);
-  const all = [...input.teamA, ...input.teamB].map((m) => m.playerId);
+  const all = [...input.teamA, ...input.teamB, ...(input.teamC ?? [])].map(
+    (m) => m.playerId
+  );
   const seen = new Set<string>();
 
   for (const id of all) {
@@ -99,6 +102,7 @@ export function nearestTeamsIntegrity(input: {
 export function nearestTeamsNeedRepair(input: {
   teamA: { playerId: string }[];
   teamB: { playerId: string }[];
+  teamC?: { playerId: string }[];
   eligibleIds: string[];
   minPlaying: number;
 }): boolean {

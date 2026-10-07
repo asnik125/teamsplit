@@ -22,6 +22,50 @@ export type PlayerTeamsPhase =
   | "stale"
   | "awaiting_generate";
 
+export type TeamSide = "A" | "B";
+export type TeamDisplayName = "Team Black" | "Team White";
+export type ThreeTeamSide = "A" | "B" | "C";
+export type MyTeamLabel = TeamDisplayName | "Team Red";
+
+/** User-facing name. Side A is Team Black; side B is Team White. */
+export function teamDisplayName(side: TeamSide): TeamDisplayName {
+  return side === "A" ? "Team Black" : "Team White";
+}
+
+/**
+ * Display name for a side. Two-team and three-team games both use
+ * Team Black and Team White. The third side is Team Red.
+ */
+export function rosterTeamLabel(side: ThreeTeamSide): MyTeamLabel {
+  if (side === "A") return "Team Black";
+  if (side === "B") return "Team White";
+  return "Team Red";
+}
+
+export function visibleTeamColumns(view: {
+  teamA: TeamMemberPublic[];
+  teamB: TeamMemberPublic[];
+  teamC: TeamMemberPublic[];
+}): { side: ThreeTeamSide; title: MyTeamLabel; members: TeamMemberPublic[] }[] {
+  const threeTeams = view.teamC.length > 0;
+  const columns: {
+    side: ThreeTeamSide;
+    title: MyTeamLabel;
+    members: TeamMemberPublic[];
+  }[] = [
+    { side: "A", title: rosterTeamLabel("A"), members: view.teamA },
+    { side: "B", title: rosterTeamLabel("B"), members: view.teamB },
+  ];
+  if (threeTeams) {
+    columns.push({
+      side: "C",
+      title: rosterTeamLabel("C"),
+      members: view.teamC,
+    });
+  }
+  return columns;
+}
+
 export interface PlayerGameViewModel {
   statusLabel: string;
   statusKind: AttendanceStatus;
@@ -32,12 +76,13 @@ export interface PlayerGameViewModel {
   confirmedLabel: string;
   teamsPhase: PlayerTeamsPhase;
   teamsMessage: string;
-  myTeamLabel: "Team A" | "Team B" | null;
+  myTeamLabel: MyTeamLabel | null;
   showTeamLists: boolean;
   showProgress: boolean;
   includeMaybePlayers: boolean;
   teamA: TeamMemberPublic[];
   teamB: TeamMemberPublic[];
+  teamC: TeamMemberPublic[];
   stale: boolean;
   manuallyAdjusted: boolean;
 }
@@ -52,10 +97,17 @@ function statusLabel(status: AttendanceStatus): string {
 function findMyTeam(
   playerId: string | null | undefined,
   teams: GameTeams
-): "Team A" | "Team B" | null {
+): MyTeamLabel | null {
   if (!playerId) return null;
-  if (teams.teamA.some((m) => m.playerId === playerId)) return "Team A";
-  if (teams.teamB.some((m) => m.playerId === playerId)) return "Team B";
+  if (teams.teamA.some((m) => m.playerId === playerId)) {
+    return rosterTeamLabel("A");
+  }
+  if (teams.teamB.some((m) => m.playerId === playerId)) {
+    return rosterTeamLabel("B");
+  }
+  if (teams.teamC?.some((m) => m.playerId === playerId)) {
+    return rosterTeamLabel("C");
+  }
   return null;
 }
 
@@ -116,6 +168,7 @@ export function buildPlayerGameView(input: {
       showProgress: true,
       teamA: [],
       teamB: [],
+      teamC: [],
       stale: false,
     };
   }
@@ -131,6 +184,7 @@ export function buildPlayerGameView(input: {
       showProgress: false,
       teamA: currentTeams?.teamA ?? [],
       teamB: currentTeams?.teamB ?? [],
+      teamC: currentTeams?.teamC ?? [],
       stale: hasLists,
     };
   }
@@ -156,6 +210,7 @@ export function buildPlayerGameView(input: {
       showProgress: false,
       teamA: [],
       teamB: [],
+      teamC: [],
       stale: false,
     };
   }
@@ -176,6 +231,7 @@ export function buildPlayerGameView(input: {
       showProgress: false,
       teamA: teams.teamA,
       teamB: teams.teamB,
+      teamC: teams.teamC ?? [],
       stale: true,
     };
   }
@@ -189,6 +245,7 @@ export function buildPlayerGameView(input: {
     showProgress: false,
     teamA: teams.teamA,
     teamB: teams.teamB,
+    teamC: teams.teamC ?? [],
     stale: false,
   };
 }

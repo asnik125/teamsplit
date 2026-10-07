@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "@/lib/firebase/auth-context";
 import { getClientDb } from "@/lib/firebase/client";
 import {
@@ -22,6 +22,7 @@ import {
 } from "@/lib/firebase/attendance-api";
 import {
   buildPlayerGameView,
+  visibleTeamColumns,
   type PlayerGameViewModel,
 } from "@/lib/player-game-view";
 import { DEFAULT_MIN_PLAYING_FOR_TEAMS, isIncludedForTeams } from "@/lib/team-sync";
@@ -47,7 +48,14 @@ import type {
   TeamRatingSystem,
 } from "@/lib/types";
 import { formatUnknownError } from "@/lib/errors";
-import { moveMemberKeepingSizeBalance } from "@/lib/balancer";
+import {
+  moveMemberAmongThreeTeams,
+  moveMemberKeepingSizeBalance,
+} from "@/lib/balancer";
+import {
+  createThreeTeamsControl,
+  MIN_ELIGIBLE_FOR_THREE_TEAMS,
+} from "@/lib/team-generate";
 
 const STATUS_OPTIONS: {
   value: AttendanceStatus;
@@ -305,12 +313,12 @@ export function PlayerGameBoard() {
     }
   }
 
-  async function generateTeams() {
+  async function generateTeams(threeTeams = false) {
     if (!user || !teamsGameId || !showAdminUI) return;
     setError(null);
     setUpdatingTeams(true);
     try {
-      await regenerateTeamsApi(user, teamsGameId);
+      await regenerateTeamsApi(user, teamsGameId, { threeTeams });
       const t = await getGameTeams(getClientDb(), teamsGameId);
       setTeams(t);
       setIncludeMaybe(Boolean(t?.includeMaybePlayers));
@@ -323,22 +331,25 @@ export function PlayerGameBoard() {
 
   async function persistManualTeams(
     teamA: TeamMemberPublic[],
-    teamB: TeamMemberPublic[]
+    teamB: TeamMemberPublic[],
+    teamC?: TeamMemberPublic[]
   ) {
     if (!user || !teamsGameId || !showAdminUI) return;
     setError(null);
     try {
-      await saveManualTeamsApi(user, teamsGameId, teamA, teamB);
-      setTeams((cur) =>
-        cur
-          ? {
-              ...cur,
-              teamA,
-              teamB,
-              manuallyAdjusted: true,
-            }
-          : cur
-      );
+      await saveManualTeamsApi(user, teamsGameId, teamA, teamB, teamC);
+      setTeams((cur) => {
+        if (!cur) return cur;
+        const next = {
+          ...cur,
+          teamA,
+          teamB,
+          manuallyAdjusted: true,
+        };
+        if (teamC && teamC.length > 0) next.teamC = teamC;
+        else delete next.teamC;
+        return next;
+      });
     } catch (e) {
       setError(formatUnknownError(e));
       const t = await getGameTeams(getClientDb(), teamsGameId);
@@ -833,15 +844,56 @@ function TeamsBody({
   onToggleIncludeMaybe: (next: boolean) => void;
   onManualTeams: (
     teamA: TeamMemberPublic[],
-    teamB: TeamMemberPublic[]
+    teamB: TeamMemberPublic[],
+    teamC?: TeamMemberPublic[]
   ) => void;
-  onGenerate: () => void;
+  onGenerate: (threeTeams: boolean) => void;
   generating: boolean;
 }) {
   const [dragId, setDragId] = useState<string | null>(null);
+  const [createThreeTeams, setCreateThreeTeams] = useState(false);
+  const threeTeamsTouched = useRef(false);
+  const threeControl = createThreeTeamsControl({
+    eligibleCount: view.includedCount,
+    checked: createThreeTeams,
+  });
+  const rosterKey = view.teamC.map((m) => m.playerId).join(",");
 
-  function onDropTo(side: "A" | "B") {
+  useEffect(() => {
+    threeTeamsTouched.current = false;
+  }, [game.id]);
+
+  useEffect(() => {
+    if (view.includedCount < MIN_ELIGIBLE_FOR_THREE_TEAMS) {
+      setCreateThreeTeams(false);
+      return;
+    }
+    if (!threeTeamsTouched.current) {
+      setCreateThreeTeams(rosterKey.length > 0);
+    }
+  }, [game.id, rosterKey, view.includedCount]);
+
+  function onDropTo(side: "A" | "B" | "C") {
     if (!isAdmin || !dragId || !view.showTeamLists) return;
+    const threeTeams = view.teamC.length > 0;
+    if (!threeTeams && side === "C") return;
+    if (threeTeams) {
+      const from = [...view.teamA, ...view.teamB, ...view.teamC].some(
+        (m) => m.playerId === dragId
+      );
+      if (!from) return;
+      const next = moveMemberAmongThreeTeams(
+        view.teamA,
+        view.teamB,
+        view.teamC,
+        dragId,
+        side
+      );
+      setDragId(null);
+      onManualTeams(next.teamA, next.teamB, next.teamC);
+      return;
+    }
+    if (side === "C") return;
     const fromA = view.teamA.find((m) => m.playerId === dragId);
     const fromB = view.teamB.find((m) => m.playerId === dragId);
     if (!fromA && !fromB) return;
@@ -880,6 +932,21 @@ function TeamsBody({
 
       {isAdmin && showTeamRatingSystem ? (
         <label className="teams-include-maybe">
+          <input
+            type="checkbox"
+            checked={threeControl.checked}
+            disabled={!threeControl.enabled || generating}
+            onChange={(e) => {
+              threeTeamsTouched.current = true;
+              setCreateThreeTeams(e.target.checked);
+            }}
+          />
+          Create 3 teams
+        </label>
+      ) : null}
+
+      {isAdmin && showTeamRatingSystem ? (
+        <label className="teams-include-maybe">
           <span className="mr-2">Team rating system</span>
           <select
             className="input"
@@ -905,7 +972,7 @@ function TeamsBody({
             type="button"
             className="btn btn-primary"
             disabled={generating || view.teamsPhase === "insufficient"}
-            onClick={() => onGenerate()}
+            onClick={() => onGenerate(threeControl.checked)}
           >
             {generating ? "Working…" : "Generate Teams"}
           </button>
@@ -931,27 +998,29 @@ function TeamsBody({
         </p>
       ) : null}
       {view.showTeamLists && (
-        <div className="teams-columns">
-          {(["A", "B"] as const).map((side) => {
-            const list = side === "A" ? view.teamA : view.teamB;
+        <div
+          className={`teams-columns${
+            view.teamC.length > 0 ? " teams-columns-3" : ""
+          }`}
+        >
+          {visibleTeamColumns(view).map((column) => {
+            const list = column.members;
             return (
               <div
-                key={side}
+                key={column.side}
                 className={`teams-drop${isAdmin ? " teams-drop-admin" : ""}`}
                 onDragOver={(e) => {
                   if (isAdmin) e.preventDefault();
                 }}
                 onDrop={(e) => {
                   e.preventDefault();
-                  onDropTo(side);
+                  onDropTo(column.side);
                 }}
               >
                 <p
-                  className={`teams-col-title ${
-                    side === "A" ? "teams-col-a" : "teams-col-b"
-                  }`}
+                  className={`teams-col-title teams-col-${column.side.toLowerCase()}`}
                 >
-                  Team {side}
+                  {column.title}
                   {isAdmin ? (
                     <span className="teams-dnd-hint"> · drag players</span>
                   ) : null}

@@ -69,7 +69,8 @@ export async function saveManualTeamsApi(
   user: User,
   gameId: string,
   teamA: TeamMemberPublic[],
-  teamB: TeamMemberPublic[]
+  teamB: TeamMemberPublic[],
+  teamC?: TeamMemberPublic[]
 ): Promise<void> {
   const token = await user.getIdToken();
   const res = await fetch("/api/teams/manual", {
@@ -78,7 +79,11 @@ export async function saveManualTeamsApi(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ gameId, teamA, teamB }),
+    body: JSON.stringify(
+      teamC && teamC.length > 0
+        ? { gameId, teamA, teamB, teamC }
+        : { gameId, teamA, teamB }
+    ),
   });
   const data = (await res.json()) as { ok?: true; error?: string };
   if (!res.ok || !data.ok) {
@@ -88,7 +93,8 @@ export async function saveManualTeamsApi(
 
 export async function regenerateTeamsApi(
   user: User,
-  gameId: string
+  gameId: string,
+  options?: { threeTeams?: boolean }
 ): Promise<{
   ok: true;
   message: string;
@@ -102,7 +108,10 @@ export async function regenerateTeamsApi(
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify({ gameId }),
+    body: JSON.stringify({
+      gameId,
+      threeTeams: options?.threeTeams === true,
+    }),
   });
   const data = (await res.json()) as {
     ok?: true;

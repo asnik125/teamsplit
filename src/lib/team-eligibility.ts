@@ -33,7 +33,9 @@ export function eligiblePoolFingerprint(eligibleIds: string[]): string {
 
 export function teamsHaveComposition(teams: GameTeams | null | undefined): boolean {
   if (!teams) return false;
-  return teams.teamA.length + teams.teamB.length > 0;
+  return (
+    teams.teamA.length + teams.teamB.length + (teams.teamC?.length ?? 0) > 0
+  );
 }
 
 /**
@@ -50,7 +52,11 @@ export function areTeamsStale(input: {
   const stored = teams!.eligibleFingerprint;
   if (typeof stored !== "string" || stored.length === 0) {
     // Legacy docs without fingerprint: compare membership to current pool.
-    const memberIds = [...teams!.teamA, ...teams!.teamB]
+    const memberIds = [
+      ...teams!.teamA,
+      ...teams!.teamB,
+      ...(teams!.teamC ?? []),
+    ]
       .map((m) => m.playerId)
       .sort((a, b) => a.localeCompare(b));
     const current = [...input.currentEligibleIds].sort((a, b) =>

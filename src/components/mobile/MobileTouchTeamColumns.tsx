@@ -2,46 +2,77 @@
 
 import { useRef, useState } from "react";
 import type { MutableRefObject, PointerEvent as ReactPointerEvent } from "react";
-import { moveMemberKeepingSizeBalance } from "@/lib/balancer";
+import {
+  moveMemberAmongThreeTeams,
+  moveMemberKeepingSizeBalance,
+} from "@/lib/balancer";
+import { rosterTeamLabel, type ThreeTeamSide } from "@/lib/player-game-view";
 import type { TeamMemberPublic } from "@/lib/types";
 
 /**
- * Touch-first Team A | Team B columns for Admin mobile.
+ * Touch-first team columns for Admin mobile.
+ * Two teams: Team Black | Team White. Three teams adds Team Red.
  * Uses pointer events (not HTML5 mouse-only drag).
  */
 export function MobileTouchTeamColumns({
   teamA,
   teamB,
+  teamC = [],
   editable,
   onChange,
   dragActiveRef,
 }: {
   teamA: TeamMemberPublic[];
   teamB: TeamMemberPublic[];
+  teamC?: TeamMemberPublic[];
   editable: boolean;
-  onChange: (teamA: TeamMemberPublic[], teamB: TeamMemberPublic[]) => void;
+  onChange: (
+    teamA: TeamMemberPublic[],
+    teamB: TeamMemberPublic[],
+    teamC?: TeamMemberPublic[]
+  ) => void;
   dragActiveRef?: MutableRefObject<boolean>;
 }) {
+  const threeTeams = teamC.length > 0;
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [hoverSide, setHoverSide] = useState<"A" | "B" | null>(null);
+  const [hoverSide, setHoverSide] = useState<ThreeTeamSide | null>(null);
   const colARef = useRef<HTMLDivElement | null>(null);
   const colBRef = useRef<HTMLDivElement | null>(null);
+  const colCRef = useRef<HTMLDivElement | null>(null);
 
   function setDragging(id: string | null) {
     setDraggingId(id);
     if (dragActiveRef) dragActiveRef.current = Boolean(id);
   }
 
-  function sideFromPoint(clientX: number, clientY: number): "A" | "B" | null {
+  function sideFromPoint(
+    clientX: number,
+    clientY: number
+  ): ThreeTeamSide | null {
     const el = document.elementFromPoint(clientX, clientY);
     if (!el) return null;
     if (colARef.current?.contains(el)) return "A";
     if (colBRef.current?.contains(el)) return "B";
+    if (colCRef.current?.contains(el)) return "C";
     return null;
   }
 
-  function dropOn(side: "A" | "B") {
+  function dropOn(side: ThreeTeamSide) {
     if (!editable || !draggingId) return;
+    if (threeTeams) {
+      const next = moveMemberAmongThreeTeams(
+        teamA,
+        teamB,
+        teamC,
+        draggingId,
+        side
+      );
+      setDragging(null);
+      setHoverSide(null);
+      onChange(next.teamA, next.teamB, next.teamC);
+      return;
+    }
+    if (side === "C") return;
     const { teamA: nextA, teamB: nextB } = moveMemberKeepingSizeBalance(
       teamA,
       teamB,
@@ -70,16 +101,22 @@ export function MobileTouchTeamColumns({
     }
   }
 
-  function renderColumn(side: "A" | "B", list: TeamMemberPublic[]) {
+  function columnRef(side: ThreeTeamSide) {
+    if (side === "A") return colARef;
+    if (side === "B") return colBRef;
+    return colCRef;
+  }
+
+  function renderColumn(side: ThreeTeamSide, list: TeamMemberPublic[]) {
     return (
       <div
-        ref={side === "A" ? colARef : colBRef}
+        ref={columnRef(side)}
         data-team-side={side}
         className={`m-team-col m-team-col-${side.toLowerCase()}${
           hoverSide === side ? " m-team-col-hover" : ""
         }`}
       >
-        <p className="m-team-col-title">Team {side}</p>
+        <p className="m-team-col-title">{rosterTeamLabel(side)}</p>
         <ul className="m-team-list">
           {list.map((m) => (
             <li
@@ -116,9 +153,10 @@ export function MobileTouchTeamColumns({
 
   return (
     <div className="m-team-dnd">
-      <div className="m-team-split">
+      <div className={`m-team-split${threeTeams ? " m-team-split-3" : ""}`}>
         {renderColumn("A", teamA)}
         {renderColumn("B", teamB)}
+        {threeTeams ? renderColumn("C", teamC) : null}
       </div>
       {editable ? (
         <p className="m-team-hint">Drag players between teams</p>

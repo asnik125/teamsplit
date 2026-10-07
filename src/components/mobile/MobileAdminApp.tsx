@@ -286,9 +286,10 @@ function MobileAdminTeamBuilder() {
                 <MobileTouchTeamColumns
                   teamA={session.teamsView.teamA}
                   teamB={session.teamsView.teamB}
+                  teamC={session.teamsView.teamC}
                   editable={session.showAdminUI}
                   dragActiveRef={dragActiveRef}
-                  onChange={(a, b) => session.persistManualTeams(a, b)}
+                  onChange={(a, b, c) => session.persistManualTeams(a, b, c)}
                 />
               ) : null}
               <p className="m-swipe-hint">Swipe for Participants →</p>

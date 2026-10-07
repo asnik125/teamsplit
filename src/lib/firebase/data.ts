@@ -26,7 +26,7 @@ import type {
 } from "../types";
 import {
   RATING_KEYS,
-  sanitizeTeamMembers,
+  normalizeStoredGameTeams,
   parseTeamRatingSystem,
 } from "../types";
 import { DEFAULT_MIN_PLAYING_FOR_TEAMS } from "../team-sync";
@@ -286,15 +286,7 @@ export async function getGameTeams(
   const snap = await getDoc(doc(db, COLLECTIONS.gameTeams, gameId));
   if (!snap.exists()) return null;
   const data = snap.data() as GameTeams;
-  return {
-    ...data,
-    teamA: sanitizeTeamMembers(data.teamA),
-    teamB: sanitizeTeamMembers(data.teamB),
-    manuallyAdjusted: Boolean(data.manuallyAdjusted),
-    includeMaybePlayers: Boolean(data.includeMaybePlayers),
-    stale: Boolean(data.stale),
-    eligibleFingerprint: data.eligibleFingerprint ?? null,
-  };
+  return normalizeStoredGameTeams(gameId, data);
 }
 
 export async function saveGameTeams(

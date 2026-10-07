@@ -34,6 +34,7 @@ export async function POST(req: NextRequest) {
     gameId?: string;
     teamA?: TeamMemberPublic[];
     teamB?: TeamMemberPublic[];
+    teamC?: TeamMemberPublic[];
   };
   try {
     body = await req.json();
@@ -54,6 +55,7 @@ export async function POST(req: NextRequest) {
       gameId,
       teamA: body.teamA,
       teamB: body.teamB,
+      teamC: Array.isArray(body.teamC) ? body.teamC : undefined,
       updatedBy: uid,
     });
     return NextResponse.json({ ok: true });
