@@ -1008,11 +1008,39 @@ body {
   gap: 0.4rem;
 }
 
+.m-chrome-brand {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+
 .m-chrome-logo {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 2.1rem;
+  padding: 0 0.7rem;
+  border: 1px solid var(--accent-blue);
+  border-radius: 0.4rem;
+  background: #172554;
+  color: #fff;
   font-weight: 700;
-  font-size: 1.05rem;
-  color: var(--text-main);
+  font-size: 0.95rem;
+  letter-spacing: -0.02em;
+  line-height: 1;
   text-decoration: none;
+}
+
+.m-chrome-logo:hover,
+.m-chrome-logo:focus-visible {
+  background: var(--accent-blue);
+  outline: none;
+}
+
+.m-chrome-logo:active {
+  background: #1d4ed8;
 }
 
 .m-chrome-title {

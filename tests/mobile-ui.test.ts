@@ -10,6 +10,9 @@ import {
   defaultTeamBuilderFrame,
   isMobileViewportWidth,
   isPlayerSafeTeamMember,
+  mobileBrandHomeControl,
+  mobileHomeTarget,
+  shouldNavigateForMobileHome,
   shouldNavigateFromSwipe,
 } from "@/lib/mobile-nav";
 import { notificationTimeSelectOptions } from "@/lib/notifications/timezone";
@@ -59,6 +62,59 @@ describe("mobile / desktop viewport split", () => {
     expect(adjacentTeamBuilderFrame("participants", -1)).toBe("teams");
     expect(adjacentTeamBuilderFrame("teams", -1)).toBe("teams");
     expect(adjacentTeamBuilderFrame("participants", 1)).toBe("participants");
+  });
+});
+
+describe("mobile TeamSplit home link", () => {
+  it("Admin home stays in Admin mode and opens Game with Teams", () => {
+    const home = mobileHomeTarget("admin");
+    expect(home.viewMode).toBe("admin");
+    expect(home.href).toBe("/");
+    expect(home.adminTab).toBe("team-builder");
+    expect(home.adminTab).toBe(defaultAdminMobileTab());
+    expect(home.teamBuilderFrame).toBe("teams");
+    expect(home.teamBuilderFrame).toBe(defaultTeamBuilderFrame());
+    expect(shouldNavigateForMobileHome("/profile")).toBe(true);
+    expect(shouldNavigateForMobileHome("/admin/players")).toBe(true);
+    expect(shouldNavigateForMobileHome("/")).toBe(false);
+  });
+
+  it("Player home stays in Player mode and opens the Game screen", () => {
+    const home = mobileHomeTarget("player");
+    expect(home.viewMode).toBe("player");
+    expect(home.href).toBe("/");
+    expect(home.playerFrame).toBe("attendance");
+    expect(home.playerFrame).toBe(defaultPlayerMobileFrame());
+  });
+
+  it("Admin using Player view keeps the Player destination", () => {
+    const home = mobileHomeTarget("player");
+    expect(home.viewMode).toBe("player");
+    expect(home.playerFrame).toBe(defaultPlayerMobileFrame());
+    expect(home.href).toBe(mobileHomeTarget("admin").href);
+    expect(home.viewMode).not.toBe(mobileHomeTarget("admin").viewMode);
+  });
+
+  it("keeps the page label outside the Home control", () => {
+    const admin = mobileBrandHomeControl({
+      viewMode: "admin",
+      pageLabel: "Profile",
+    });
+    const player = mobileBrandHomeControl({
+      viewMode: "player",
+      pageLabel: "Game",
+    });
+    expect(admin.brandText).toBe("TeamSplit");
+    expect(admin.accessibleName).toBe("Home");
+    expect(admin.pageLabel).toBe("Profile");
+    expect(admin.pageLabelInsideLink).toBe(false);
+    expect(admin.destination.viewMode).toBe("admin");
+    expect(admin.destination.teamBuilderFrame).toBe("teams");
+    expect(player.accessibleName).toBe("Home");
+    expect(player.pageLabel).toBe("Game");
+    expect(player.pageLabelInsideLink).toBe(false);
+    expect(player.destination.viewMode).toBe("player");
+    expect(player.destination.playerFrame).toBe("attendance");
   });
 });
 

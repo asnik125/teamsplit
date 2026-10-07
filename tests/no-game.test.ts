@@ -90,7 +90,10 @@ describe("No Game attendance", () => {
     expect(attendanceMapAfterNoGameChange(prev, false)).toEqual({});
 
     const reopened = game({ id: "g1", date: "2026-10-01", noGame: false });
-    expect(canEditAttendanceOnGame(reopened, "player")).toBe(true);
+    const beforeKickoff = new Date("2026-10-01T20:00:00.000Z");
+    expect(canEditAttendanceOnGame(reopened, "player", beforeKickoff)).toBe(
+      true
+    );
     expect(effectiveAttendanceStatus(reopened, undefined)).toBe("no_response");
   });
 
@@ -98,7 +101,10 @@ describe("No Game attendance", () => {
     const legacy = game({ id: "g1", date: "2026-10-01" });
     delete (legacy as { noGame?: boolean }).noGame;
     expect(gameHasNoGame(legacy as Game)).toBe(false);
-    expect(canEditAttendanceOnGame(legacy as Game, "player")).toBe(true);
+    const beforeKickoff = new Date("2026-10-01T20:00:00.000Z");
+    expect(canEditAttendanceOnGame(legacy as Game, "player", beforeKickoff)).toBe(
+      true
+    );
     expect(isPlayableGame(legacy as Game)).toBe(true);
     expect(effectiveAttendanceStatus(legacy as Game, "playing")).toBe(
       "playing"

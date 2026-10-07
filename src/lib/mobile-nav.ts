@@ -39,6 +39,61 @@ export function defaultTeamBuilderFrame(): TeamBuilderFrame {
   return "teams";
 }
 
+/** In-app reset when Home is tapped while already on `/`. */
+export const MOBILE_HOME_EVENT = "teamsplit:mobile-home";
+
+export interface MobileHomeTarget {
+  href: "/";
+  /** Echo of the active view. Home must not flip Admin ↔ Player. */
+  viewMode: "admin" | "player";
+  adminTab: AdminMobileTab;
+  teamBuilderFrame: TeamBuilderFrame;
+  playerFrame: PlayerMobileFrame;
+}
+
+/**
+ * Where the mobile TeamSplit brand goes.
+ * Admin → Game screen, Teams tab. Player → Game/home (Attendance).
+ */
+export function mobileHomeTarget(
+  viewMode: "admin" | "player"
+): MobileHomeTarget {
+  return {
+    href: "/",
+    viewMode,
+    adminTab: defaultAdminMobileTab(),
+    teamBuilderFrame: defaultTeamBuilderFrame(),
+    playerFrame: defaultPlayerMobileFrame(),
+  };
+}
+
+/** Same-route Home only resets shell state; other pages navigate to `/`. */
+export function shouldNavigateForMobileHome(pathname: string): boolean {
+  return pathname !== "/";
+}
+
+/** Brand control: page label stays beside the link, never inside it. */
+export function mobileBrandHomeControl(input: {
+  viewMode: "admin" | "player";
+  pageLabel?: string | null;
+}): {
+  brandText: "TeamSplit";
+  accessibleName: "Home";
+  href: "/";
+  pageLabel: string | null;
+  pageLabelInsideLink: false;
+  destination: MobileHomeTarget;
+} {
+  return {
+    brandText: "TeamSplit",
+    accessibleName: "Home",
+    href: "/",
+    pageLabel: input.pageLabel ?? null,
+    pageLabelInsideLink: false,
+    destination: mobileHomeTarget(input.viewMode),
+  };
+}
+
 export function adjacentPlayerFrame(
   current: PlayerMobileFrame,
   direction: -1 | 1

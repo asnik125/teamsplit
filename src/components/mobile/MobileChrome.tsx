@@ -1,8 +1,14 @@
 "use client";
 
-import type { ReactNode } from "react";
+import type { MouseEvent, ReactNode } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useAuth, type AppViewMode } from "@/lib/firebase/auth-context";
+import {
+  MOBILE_HOME_EVENT,
+  mobileBrandHomeControl,
+  shouldNavigateForMobileHome,
+} from "@/lib/mobile-nav";
 
 export function MobileChrome({
   title,
@@ -14,20 +20,42 @@ export function MobileChrome({
   onOpenMenu?: () => void;
 }) {
   const { profile, isAdmin, viewMode, setViewMode } = useAuth();
+  const pathname = usePathname();
+  const router = useRouter();
+  const home = mobileBrandHomeControl({
+    viewMode: isAdmin ? viewMode : "player",
+    pageLabel: title,
+  });
 
   function switchView(mode: AppViewMode) {
     if (mode === viewMode) return;
     setViewMode(mode);
   }
 
+  function goHome(event: MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    if (shouldNavigateForMobileHome(pathname)) {
+      router.push(home.href);
+      return;
+    }
+    window.dispatchEvent(new Event(MOBILE_HOME_EVENT));
+  }
+
   return (
     <header className="m-chrome">
       <div className="m-chrome-row">
         <div className="m-chrome-brand">
-          <Link href="/" className="m-chrome-logo">
-            TeamSplit
+          <Link
+            href={home.href}
+            className="m-chrome-logo"
+            aria-label={home.accessibleName}
+            onClick={goHome}
+          >
+            {home.brandText}
           </Link>
-          {title ? <span className="m-chrome-title">{title}</span> : null}
+          {home.pageLabel ? (
+            <span className="m-chrome-title">{home.pageLabel}</span>
+          ) : null}
         </div>
         {isAdmin && (
           <div className="m-chrome-view" role="group" aria-label="View mode">

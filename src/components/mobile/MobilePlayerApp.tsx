@@ -13,6 +13,7 @@ import {
 import {
   adjacentPlayerFrame,
   defaultPlayerMobileFrame,
+  MOBILE_HOME_EVENT,
   type PlayerMobileFrame,
 } from "@/lib/mobile-nav";
 import type { AttendanceStatus } from "@/lib/types";
@@ -55,6 +56,15 @@ export function MobilePlayerApp({
   useEffect(() => {
     setFrame(initialFrame);
   }, [initialFrame]);
+
+  useEffect(() => {
+    function onHome() {
+      setFrame(defaultPlayerMobileFrame());
+      setMenuOpen(false);
+    }
+    window.addEventListener(MOBILE_HOME_EVENT, onHome);
+    return () => window.removeEventListener(MOBILE_HOME_EVENT, onHome);
+  }, []);
 
   const swipe = useSwipeFrames({
     enabled: frame !== "profile",

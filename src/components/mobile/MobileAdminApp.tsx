@@ -15,6 +15,7 @@ import {
   adjacentTeamBuilderFrame,
   defaultAdminMobileTab,
   defaultTeamBuilderFrame,
+  MOBILE_HOME_EVENT,
   type AdminMobileTab,
   type TeamBuilderFrame,
 } from "@/lib/mobile-nav";
@@ -43,6 +44,15 @@ export function MobileAdminApp({
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab]);
+
+  useEffect(() => {
+    function onHome() {
+      setTab(defaultAdminMobileTab());
+      setMenuOpen(false);
+    }
+    window.addEventListener(MOBILE_HOME_EVENT, onHome);
+    return () => window.removeEventListener(MOBILE_HOME_EVENT, onHome);
+  }, []);
 
   // Real players never see this shell (RequireAuth adminOnly + showAdminUI).
   if (!showAdminUI) return null;
@@ -192,6 +202,14 @@ function MobileAdminTeamBuilder() {
     onPrev: () => setFrame((f) => adjacentTeamBuilderFrame(f, -1)),
     onNext: () => setFrame((f) => adjacentTeamBuilderFrame(f, 1)),
   });
+
+  useEffect(() => {
+    function onHome() {
+      setFrame(defaultTeamBuilderFrame());
+    }
+    window.addEventListener(MOBILE_HOME_EVENT, onHome);
+    return () => window.removeEventListener(MOBILE_HOME_EVENT, onHome);
+  }, []);
 
   const game = session.selectedGame;
   const locked = game ? !session.canEditAttendanceOnGame(game) : true;
