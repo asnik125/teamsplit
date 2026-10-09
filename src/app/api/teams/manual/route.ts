@@ -35,6 +35,7 @@ export async function POST(req: NextRequest) {
     teamA?: TeamMemberPublic[];
     teamB?: TeamMemberPublic[];
     teamC?: TeamMemberPublic[];
+    allowUnevenSizes?: boolean;
   };
   try {
     body = await req.json();
@@ -57,6 +58,7 @@ export async function POST(req: NextRequest) {
       teamB: body.teamB,
       teamC: Array.isArray(body.teamC) ? body.teamC : undefined,
       updatedBy: uid,
+      allowUnevenSizes: body.allowUnevenSizes === true,
     });
     return NextResponse.json({ ok: true });
   } catch (e) {

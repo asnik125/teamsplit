@@ -190,8 +190,8 @@ describe("mobile swipe vs scroll / drag", () => {
   });
 });
 
-describe("mobile team drag integrity", () => {
-  it("moves with size-preserving existing helper (touch path)", () => {
+describe("desktop size-preserving team move", () => {
+  it("keeps every player when a move would unbalance two teams", () => {
     const teamA = ["a", "b", "c"].map(member);
     const teamB = ["d", "e", "f"].map(member);
     const next = moveMemberKeepingSizeBalance(teamA, teamB, "a", "B");

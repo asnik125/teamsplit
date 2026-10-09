@@ -70,20 +70,28 @@ export async function saveManualTeamsApi(
   gameId: string,
   teamA: TeamMemberPublic[],
   teamB: TeamMemberPublic[],
-  teamC?: TeamMemberPublic[]
+  teamC?: TeamMemberPublic[],
+  options?: { allowUnevenSizes?: boolean }
 ): Promise<void> {
   const token = await user.getIdToken();
+  const payload: {
+    gameId: string;
+    teamA: TeamMemberPublic[];
+    teamB: TeamMemberPublic[];
+    teamC?: TeamMemberPublic[];
+    allowUnevenSizes?: boolean;
+  } =
+    teamC && teamC.length > 0
+      ? { gameId, teamA, teamB, teamC }
+      : { gameId, teamA, teamB };
+  if (options?.allowUnevenSizes) payload.allowUnevenSizes = true;
   const res = await fetch("/api/teams/manual", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${token}`,
     },
-    body: JSON.stringify(
-      teamC && teamC.length > 0
-        ? { gameId, teamA, teamB, teamC }
-        : { gameId, teamA, teamB }
-    ),
+    body: JSON.stringify(payload),
   });
   const data = (await res.json()) as { ok?: true; error?: string };
   if (!res.ok || !data.ok) {

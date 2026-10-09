@@ -38,6 +38,11 @@ import {
 } from "@/lib/no-game";
 import { compareGamesByDateTime } from "@/lib/schedule";
 import { formatUnknownError } from "@/lib/errors";
+import {
+  applySavedManualTeams,
+  createMoveGate,
+  rosterAfterFailedManualSave,
+} from "@/lib/mobile-team-move";
 import { shouldNavigateFromSwipe } from "@/lib/mobile-nav";
 import type {
   AttendanceStatus,
@@ -69,6 +74,8 @@ export function useNearestGameSession() {
   const [error, setError] = useState<string | null>(null);
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [updatingTeams, setUpdatingTeams] = useState(false);
+  const [savingTeams, setSavingTeams] = useState(false);
+  const manualMoveGate = useRef(createMoveGate());
   const [selectedGameId, setSelectedGameId] = useState<string | null>(null);
 
   const canEditPlayer = useCallback(
@@ -276,20 +283,27 @@ export function useNearestGameSession() {
     teamC?: TeamMemberPublic[]
   ) {
     if (!user || !teamsGameId || !showAdminUI) return;
+    if (!manualMoveGate.current.tryEnter()) return;
     setError(null);
+    setSavingTeams(true);
     try {
-      await saveManualTeamsApi(user, teamsGameId, teamA, teamB, teamC);
-      setTeams((cur) => {
-        if (!cur) return cur;
-        const next = { ...cur, teamA, teamB, manuallyAdjusted: true };
-        if (teamC && teamC.length > 0) next.teamC = teamC;
-        else delete next.teamC;
-        return next;
+      await saveManualTeamsApi(user, teamsGameId, teamA, teamB, teamC, {
+        allowUnevenSizes: true,
       });
+      setTeams((cur) =>
+        cur ? applySavedManualTeams(cur, { teamA, teamB, teamC }) : cur
+      );
     } catch (e) {
       setError(formatUnknownError(e));
-      const t = await getGameTeams(getClientDb(), teamsGameId);
-      setTeams(t);
+      try {
+        const t = await getGameTeams(getClientDb(), teamsGameId);
+        setTeams((cur) => (cur ? rosterAfterFailedManualSave(cur, t) : cur));
+      } catch {
+        // Leave the roster that was already on screen.
+      }
+    } finally {
+      manualMoveGate.current.leave();
+      setSavingTeams(false);
     }
   }
 
@@ -375,6 +389,7 @@ export function useNearestGameSession() {
     setError,
     savingKey,
     updatingTeams,
+    savingTeams,
     myStatus,
     canEditPlayer,
     cellStatus,

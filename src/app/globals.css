@@ -1564,18 +1564,79 @@ body {
 }
 
 .m-team-chip {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
   background: #020617;
   border: 1px solid var(--border);
   border-radius: 0.4rem;
-  padding: 0.45rem 0.5rem;
+  padding: 0.2rem 0.35rem 0.2rem 0.5rem;
   font-size: 0.78rem;
   font-weight: 600;
-  touch-action: none;
   user-select: none;
 }
 
-.m-team-chip-dragging {
-  opacity: 0.55;
+.m-team-chip-name {
+  flex: 1;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.m-team-col-b .m-team-chip-name {
+  text-align: right;
+}
+
+.m-team-move-btn {
+  flex: none;
+  min-width: 2.75rem;
+  min-height: 2.75rem;
+  border: 1px solid #334155;
+  border-radius: 0.4rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 1.15rem;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0 0.35rem;
+}
+
+.m-team-move-btn:disabled {
+  opacity: 0.45;
+}
+
+.m-team-move-btn-menu {
+  min-width: 2.5rem;
+  font-size: 0.68rem;
+  letter-spacing: 0.01em;
+}
+
+.m-team-move-menu {
+  position: absolute;
+  z-index: 4;
+  top: calc(100% + 0.2rem);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 7.5rem;
+  padding: 0.3rem;
+  border: 1px solid #334155;
+  border-radius: 0.4rem;
+  background: #0f172a;
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
+}
+
+.m-team-move-menu button {
+  min-height: 2.75rem;
+  border: none;
+  border-radius: 0.3rem;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.35rem 0.5rem;
+  text-align: left;
 }
 
 .m-team-dnd {

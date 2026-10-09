@@ -330,7 +330,7 @@ function MobileAdminTeamBuilder() {
                   teamB={session.teamsView.teamB}
                   teamC={session.teamsView.teamC}
                   editable={session.showAdminUI}
-                  dragActiveRef={dragActiveRef}
+                  saving={session.savingTeams}
                   onChange={(a, b, c) => session.persistManualTeams(a, b, c)}
                 />
               ) : null}

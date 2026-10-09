@@ -811,13 +811,20 @@ export async function saveManualTeams(input: {
   teamB: TeamMemberPublic[];
   teamC?: TeamMemberPublic[];
   updatedBy: string | null;
+  /** Mobile arrow moves may leave team sizes uneven. Desktop stays strict. */
+  allowUnevenSizes?: boolean;
 }): Promise<void> {
   await assertAdminCanOperateTeamsOnGame(input.gameId);
   const teamC = input.teamC?.length ? input.teamC : undefined;
   const ids = [...input.teamA, ...input.teamB, ...(teamC ?? [])].map(
     (m) => m.playerId
   );
-  if (teamC) {
+  if (input.allowUnevenSizes) {
+    const assigned = ids.filter(Boolean);
+    if (new Set(assigned).size !== assigned.length) {
+      throw new Error("Duplicate players detected across teams");
+    }
+  } else if (teamC) {
     assertValidTeamGroups(ids, [input.teamA, input.teamB, teamC]);
   } else {
     if (teamSizeDiff(input.teamA, input.teamB) > 1) {

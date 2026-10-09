@@ -1,151 +1,153 @@
 "use client";
 
-import { useRef, useState } from "react";
-import type { MutableRefObject, PointerEvent as ReactPointerEvent } from "react";
-import {
-  moveMemberAmongThreeTeams,
-  moveMemberKeepingSizeBalance,
-} from "@/lib/balancer";
+import { useEffect, useState } from "react";
+import { movePlayerToSide, type MobileTeamSide } from "@/lib/mobile-team-move";
 import { rosterTeamLabel, type ThreeTeamSide } from "@/lib/player-game-view";
 import type { TeamMemberPublic } from "@/lib/types";
 
 /**
- * Touch-first team columns for Admin mobile.
- * Two teams: Team Black | Team White. Three teams adds Team Red.
- * Uses pointer events (not HTML5 mouse-only drag).
+ * Mobile Admin team columns.
+ * Two teams: > moves Black to White, < moves White to Black.
+ * Three teams: a Move button lists the other two teams.
+ * Moves transfer that player only.
  */
 export function MobileTouchTeamColumns({
   teamA,
   teamB,
   teamC = [],
   editable,
+  saving = false,
   onChange,
-  dragActiveRef,
 }: {
   teamA: TeamMemberPublic[];
   teamB: TeamMemberPublic[];
   teamC?: TeamMemberPublic[];
   editable: boolean;
+  saving?: boolean;
   onChange: (
     teamA: TeamMemberPublic[],
     teamB: TeamMemberPublic[],
     teamC?: TeamMemberPublic[]
   ) => void;
-  dragActiveRef?: MutableRefObject<boolean>;
 }) {
   const threeTeams = teamC.length > 0;
-  const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [hoverSide, setHoverSide] = useState<ThreeTeamSide | null>(null);
-  const colARef = useRef<HTMLDivElement | null>(null);
-  const colBRef = useRef<HTMLDivElement | null>(null);
-  const colCRef = useRef<HTMLDivElement | null>(null);
+  const [menuFor, setMenuFor] = useState<string | null>(null);
 
-  function setDragging(id: string | null) {
-    setDraggingId(id);
-    if (dragActiveRef) dragActiveRef.current = Boolean(id);
-  }
+  useEffect(() => {
+    if (saving) setMenuFor(null);
+  }, [saving]);
 
-  function sideFromPoint(
-    clientX: number,
-    clientY: number
-  ): ThreeTeamSide | null {
-    const el = document.elementFromPoint(clientX, clientY);
-    if (!el) return null;
-    if (colARef.current?.contains(el)) return "A";
-    if (colBRef.current?.contains(el)) return "B";
-    if (colCRef.current?.contains(el)) return "C";
-    return null;
-  }
-
-  function dropOn(side: ThreeTeamSide) {
-    if (!editable || !draggingId) return;
-    if (threeTeams) {
-      const next = moveMemberAmongThreeTeams(
-        teamA,
-        teamB,
-        teamC,
-        draggingId,
-        side
-      );
-      setDragging(null);
-      setHoverSide(null);
-      onChange(next.teamA, next.teamB, next.teamC);
-      return;
-    }
-    if (side === "C") return;
-    const { teamA: nextA, teamB: nextB } = moveMemberKeepingSizeBalance(
+  function move(playerId: string, to: MobileTeamSide) {
+    if (!editable || saving) return;
+    const next = movePlayerToSide({
       teamA,
       teamB,
-      draggingId,
-      side
+      teamC,
+      playerId,
+      to,
+    });
+    setMenuFor(null);
+    onChange(next.teamA, next.teamB, threeTeams ? next.teamC : undefined);
+  }
+
+  function otherSides(side: ThreeTeamSide): ThreeTeamSide[] {
+    return (["A", "B", "C"] as const).filter((candidate) => candidate !== side);
+  }
+
+  function renderPlayer(side: ThreeTeamSide, member: TeamMemberPublic) {
+    const name = (
+      <span className="m-team-chip-name">
+        {member.displayName}
+        {member.maybe ? " (Maybe)" : ""}
+      </span>
     );
-    setDragging(null);
-    setHoverSide(null);
-    if (
-      nextA.map((m) => m.playerId).join() !==
-        teamA.map((m) => m.playerId).join() ||
-      nextB.map((m) => m.playerId).join() !==
-        teamB.map((m) => m.playerId).join()
-    ) {
-      onChange(nextA, nextB);
-    }
-  }
 
-  function finishPointer(e: ReactPointerEvent) {
-    if (!draggingId) return;
-    const side = sideFromPoint(e.clientX, e.clientY) ?? hoverSide;
-    if (side) dropOn(side);
-    else {
-      setDragging(null);
-      setHoverSide(null);
+    if (!editable) {
+      return (
+        <li key={member.playerId} className="m-team-chip">
+          {name}
+        </li>
+      );
     }
-  }
 
-  function columnRef(side: ThreeTeamSide) {
-    if (side === "A") return colARef;
-    if (side === "B") return colBRef;
-    return colCRef;
+    if (!threeTeams) {
+      const to: MobileTeamSide = side === "A" ? "B" : "A";
+      const glyph = side === "A" ? ">" : "<";
+      return (
+        <li key={member.playerId} className="m-team-chip">
+          {side === "B" ? (
+            <button
+              type="button"
+              className="m-team-move-btn"
+              aria-label={`Move to ${rosterTeamLabel(to)}`}
+              disabled={saving}
+              onClick={() => move(member.playerId, to)}
+            >
+              {glyph}
+            </button>
+          ) : null}
+          {name}
+          {side === "A" ? (
+            <button
+              type="button"
+              className="m-team-move-btn"
+              aria-label={`Move to ${rosterTeamLabel(to)}`}
+              disabled={saving}
+              onClick={() => move(member.playerId, to)}
+            >
+              {glyph}
+            </button>
+          ) : null}
+        </li>
+      );
+    }
+
+    const open = menuFor === member.playerId;
+    return (
+      <li key={member.playerId} className="m-team-chip">
+        {name}
+        <button
+          type="button"
+          className="m-team-move-btn m-team-move-btn-menu"
+          aria-label={`Move ${member.displayName}`}
+          aria-expanded={open}
+          disabled={saving}
+          onClick={() =>
+            setMenuFor((current) =>
+              current === member.playerId ? null : member.playerId
+            )
+          }
+        >
+          Move
+        </button>
+        {open ? (
+          <div className="m-team-move-menu" role="menu">
+            {otherSides(side).map((destination) => (
+              <button
+                key={destination}
+                type="button"
+                role="menuitem"
+                disabled={saving}
+                onClick={() => move(member.playerId, destination)}
+              >
+                {rosterTeamLabel(destination)}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </li>
+    );
   }
 
   function renderColumn(side: ThreeTeamSide, list: TeamMemberPublic[]) {
     return (
       <div
-        ref={columnRef(side)}
         data-team-side={side}
-        className={`m-team-col m-team-col-${side.toLowerCase()}${
-          hoverSide === side ? " m-team-col-hover" : ""
-        }`}
+        className={`m-team-col m-team-col-${side.toLowerCase()}`}
       >
         <p className="m-team-col-title">{rosterTeamLabel(side)}</p>
         <ul className="m-team-list">
-          {list.map((m) => (
-            <li
-              key={m.playerId}
-              className={`m-team-chip${
-                draggingId === m.playerId ? " m-team-chip-dragging" : ""
-              }`}
-              onPointerDown={(e) => {
-                if (!editable) return;
-                e.preventDefault();
-                e.currentTarget.setPointerCapture(e.pointerId);
-                setDragging(m.playerId);
-                setHoverSide(side);
-              }}
-              onPointerMove={(e) => {
-                if (!draggingId) return;
-                const next = sideFromPoint(e.clientX, e.clientY);
-                if (next) setHoverSide(next);
-              }}
-              onPointerUp={finishPointer}
-              onPointerCancel={() => {
-                setDragging(null);
-                setHoverSide(null);
-              }}
-            >
-              {m.displayName}
-              {m.maybe ? " (Maybe)" : ""}
-            </li>
-          ))}
+          {list.map((member) => renderPlayer(side, member))}
         </ul>
       </div>
     );
@@ -158,9 +160,6 @@ export function MobileTouchTeamColumns({
         {renderColumn("B", teamB)}
         {threeTeams ? renderColumn("C", teamC) : null}
       </div>
-      {editable ? (
-        <p className="m-team-hint">Drag players between teams</p>
-      ) : null}
     </div>
   );
 }
