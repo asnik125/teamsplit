@@ -112,7 +112,7 @@ async function loadNearestUpcomingGameId(): Promise<string | null> {
 
 /**
  * Nearest upcoming game, or the in-progress game still inside the Admin
- * post-kickoff repair window (through 22:00 America/Vancouver).
+ * post-kickoff repair window (through end of game date America/Vancouver).
  */
 async function assertAdminCanOperateTeamsOnGame(
   gameId: string,
@@ -126,14 +126,14 @@ async function assertAdminCanOperateTeamsOnGame(
     const g = snap.data() as Game;
     if (!canAdminOperateTeamsOnGame(g, [...games, g], now)) {
       throw new Error(
-        "Team operations only apply to the nearest upcoming game (or tonight's game until 10:00 PM Vancouver)"
+        "Team operations only apply to the nearest upcoming game (or tonight's game until midnight Vancouver)"
       );
     }
     return g;
   }
   if (!canAdminOperateTeamsOnGame(game, games, now)) {
     throw new Error(
-      "Team operations only apply to the nearest upcoming game (or tonight's game until 10:00 PM Vancouver)"
+      "Team operations only apply to the nearest upcoming game (or tonight's game until midnight Vancouver)"
     );
   }
   return game;
@@ -261,7 +261,7 @@ export async function applyAttendanceAndSyncTeams(input: {
   playerId: string;
   status: AttendanceStatus;
   updatedBy: string | null;
-  /** Caller role — gates post-kickoff edits (Admin/Owner until 22:00 Vancouver). */
+  /** Caller role — gates post-kickoff edits (Admin/Owner until midnight Vancouver). */
   role?: string | null;
   now?: Date;
 }): Promise<AttendanceSyncResult> {
@@ -292,7 +292,7 @@ export async function applyAttendanceAndSyncTeams(input: {
   }
   if (!canEditAttendanceOnGame(game, input.role ?? null, now)) {
     throw new Error(
-      "Attendance is locked for this game (past kickoff or past 10:00 PM Vancouver)"
+      "Attendance is locked for this game (past kickoff or past midnight Vancouver)"
     );
   }
 

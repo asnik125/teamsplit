@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import {
   ATTENDANCE_ADMIN_LOCK_LOCAL_TIME,
@@ -5,6 +6,7 @@ import {
   attendanceAdminLockAtMs,
   canAdminOperateTeamsOnGame,
   canEditAttendanceOnGame,
+  defaultFocusedGame,
   roleMayEditAttendanceAfterKickoff,
 } from "@/lib/no-game";
 import {
@@ -13,6 +15,7 @@ import {
   TEAMS_STALE_MESSAGE,
   teamsStatusMessageForState,
 } from "@/lib/team-eligibility";
+import { nextUpcomingGame } from "@/lib/schedule";
 import { vancouverLocalToUtc } from "@/lib/notifications/timezone";
 import { GAME_TIMEZONE } from "@/lib/schedule";
 import type { Game, GameTeams } from "@/lib/types";
@@ -36,28 +39,28 @@ function game(
   };
 }
 
-/** 19:30 kickoff on 2026-09-24 → after kickoff, before 22:00 Vancouver. */
-const AFTER_KICKOFF = vancouverLocalToUtc(
-  "2026-09-24",
-  "20:00",
-  GAME_TIMEZONE
-);
-/** Exactly / after 22:00 Vancouver lock. */
-const AFTER_22 = vancouverLocalToUtc("2026-09-24", "22:00", GAME_TIMEZONE);
-const AFTER_22_01 = vancouverLocalToUtc("2026-09-24", "22:01", GAME_TIMEZONE);
-const BEFORE_KICKOFF = vancouverLocalToUtc(
-  "2026-09-24",
-  "18:00",
-  GAME_TIMEZONE
-);
+/** Thursday Oct 15, 2026 7:30 PM Vancouver kickoff — production failure date. */
+const GAME_DATE = "2026-10-15";
+const NEXT_DATE = "2026-10-22";
+
+const AT_729 = vancouverLocalToUtc(GAME_DATE, "19:29", GAME_TIMEZONE);
+const AT_730 = vancouverLocalToUtc(GAME_DATE, "19:30", GAME_TIMEZONE);
+const AT_902 = vancouverLocalToUtc(GAME_DATE, "21:02", GAME_TIMEZONE);
+const AT_943 = vancouverLocalToUtc(GAME_DATE, "21:43", GAME_TIMEZONE);
+const AT_1001 = vancouverLocalToUtc(GAME_DATE, "22:01", GAME_TIMEZONE);
+const AT_1159 = vancouverLocalToUtc(GAME_DATE, "23:59", GAME_TIMEZONE);
+const AT_MIDNIGHT = vancouverLocalToUtc("2026-10-16", "00:00", GAME_TIMEZONE);
+const BEFORE_KICKOFF = vancouverLocalToUtc(GAME_DATE, "18:00", GAME_TIMEZONE);
 
 const tonight = () =>
-  game({ id: "tonight", date: "2026-09-24", startTime: "19:30" });
+  game({ id: "tonight", date: GAME_DATE, startTime: "19:30", endTime: "21:02" });
+const nextWeek = () =>
+  game({ id: "next", date: NEXT_DATE, startTime: "19:30" });
 
 describe("Attendance edit window (America/Vancouver)", () => {
-  it("locks at 22:00 local on the game date", () => {
-    expect(ATTENDANCE_ADMIN_LOCK_LOCAL_TIME).toBe("22:00");
-    expect(attendanceAdminLockAtMs(tonight())).toBe(AFTER_22.getTime());
+  it("locks at midnight on the next Vancouver calendar day", () => {
+    expect(ATTENDANCE_ADMIN_LOCK_LOCAL_TIME).toBe("00:00");
+    expect(attendanceAdminLockAtMs(tonight())).toBe(AT_MIDNIGHT.getTime());
   });
 
   it("Admin and Owner may edit after kickoff", () => {
@@ -68,70 +71,124 @@ describe("Attendance edit window (America/Vancouver)", () => {
 
   it("Player cannot edit after kickoff", () => {
     const g = tonight();
-    expect(canEditAttendanceOnGame(g, "player", AFTER_KICKOFF)).toBe(false);
-    expect(canEditAttendanceOnGame(g, null, AFTER_KICKOFF)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "player", AT_943)).toBe(false);
+    expect(canEditAttendanceOnGame(g, null, AT_943)).toBe(false);
   });
 
-  it("Admin can edit after kickoff but before 10 PM Vancouver", () => {
+  it("Admin can edit after kickoff through 11:59 PM Vancouver", () => {
     const g = tonight();
-    expect(canEditAttendanceOnGame(g, "admin", AFTER_KICKOFF)).toBe(true);
     expect(canEditAttendanceOnGame(g, "admin", BEFORE_KICKOFF)).toBe(true);
+    expect(canEditAttendanceOnGame(g, "admin", AT_730)).toBe(true);
+    expect(canEditAttendanceOnGame(g, "admin", AT_943)).toBe(true);
+    expect(canEditAttendanceOnGame(g, "admin", AT_1001)).toBe(true);
+    expect(canEditAttendanceOnGame(g, "admin", AT_1159)).toBe(true);
   });
 
-  it("Owner can edit after kickoff but before 10 PM Vancouver", () => {
+  it("Owner can edit after kickoff through 11:59 PM Vancouver", () => {
     const g = tonight();
-    expect(canEditAttendanceOnGame(g, "owner", AFTER_KICKOFF)).toBe(true);
+    expect(canEditAttendanceOnGame(g, "owner", AT_943)).toBe(true);
+    expect(canEditAttendanceOnGame(g, "owner", AT_1159)).toBe(true);
   });
 
-  it("Admin/Owner cannot edit after 10 PM Vancouver", () => {
+  it("Admin/Owner cannot edit from midnight Vancouver", () => {
     const g = tonight();
-    expect(canEditAttendanceOnGame(g, "admin", AFTER_22)).toBe(false);
-    expect(canEditAttendanceOnGame(g, "owner", AFTER_22_01)).toBe(false);
-    expect(canEditAttendanceOnGame(g, "player", AFTER_22)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "admin", AT_MIDNIGHT)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "owner", AT_MIDNIGHT)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "player", AT_MIDNIGHT)).toBe(false);
   });
 
   it("future games stay editable for players before their kickoff", () => {
-    const future = game({
-      id: "next",
-      date: "2026-10-01",
-      startTime: "19:30",
-    });
-    expect(canEditAttendanceOnGame(future, "player", AFTER_KICKOFF)).toBe(
-      true
-    );
+    expect(canEditAttendanceOnGame(nextWeek(), "player", AT_943)).toBe(true);
   });
 
-  it("No Game remains locked for Admin even before 10 PM", () => {
+  it("No Game remains locked for Admin even before midnight", () => {
     const g = game({
       id: "nogame",
-      date: "2026-09-24",
+      date: GAME_DATE,
       startTime: "19:30",
       noGame: true,
     });
-    expect(canEditAttendanceOnGame(g, "admin", AFTER_KICKOFF)).toBe(false);
+    expect(canEditAttendanceOnGame(g, "admin", AT_943)).toBe(false);
   });
 });
 
-describe("Admin team ops after kickoff", () => {
-  it("allows Generate on in-progress game until 22:00 Vancouver", () => {
+describe("Admin team ops after kickoff through midnight", () => {
+  it("allows Generate / Include Maybe / manual moves through 11:59 PM", () => {
     const g = tonight();
-    const next = game({ id: "next", date: "2026-10-01", startTime: "19:30" });
-    expect(canAdminOperateTeamsOnGame(g, [g, next], AFTER_KICKOFF)).toBe(true);
-    expect(canAdminOperateTeamsOnGame(g, [g, next], AFTER_22)).toBe(false);
+    const next = nextWeek();
+    for (const now of [AT_729, AT_730, AT_902, AT_943, AT_1001, AT_1159]) {
+      expect(canAdminOperateTeamsOnGame(g, [g, next], now)).toBe(true);
+    }
+    expect(canAdminOperateTeamsOnGame(g, [g, next], AT_MIDNIGHT)).toBe(false);
   });
 
   it("still allows nearest upcoming before its kickoff", () => {
-    const next = game({ id: "next", date: "2026-10-01", startTime: "19:30" });
+    const next = nextWeek();
     expect(
-      canAdminOperateTeamsOnGame(next, [tonight(), next], AFTER_KICKOFF)
+      canAdminOperateTeamsOnGame(next, [tonight(), next], AT_943)
     ).toBe(true);
   });
 
-  it("Admin Teams focus prefers in-progress game over next week", () => {
+  it("Admin focus prefers tonight until midnight; players jump at kickoff", () => {
     const g = tonight();
-    const next = game({ id: "next", date: "2026-10-01", startTime: "19:30" });
-    expect(adminTeamsFocusGame([g, next], AFTER_KICKOFF)?.id).toBe("tonight");
-    expect(adminTeamsFocusGame([g, next], AFTER_22)?.id).toBe("next");
+    const next = nextWeek();
+    const games = [g, next];
+
+    for (const now of [AT_729, AT_730, AT_902, AT_943, AT_1001, AT_1159]) {
+      expect(adminTeamsFocusGame(games, now)?.id).toBe("tonight");
+      expect(defaultFocusedGame(games, { adminFocus: true, now })?.id).toBe(
+        "tonight"
+      );
+    }
+
+    // Player / nextUpcomingGame drops tonight as soon as kickoff arrives.
+    expect(nextUpcomingGame(games, AT_729)?.id).toBe("tonight");
+    expect(nextUpcomingGame(games, AT_730)?.id).toBe("next");
+    expect(defaultFocusedGame(games, { adminFocus: false, now: AT_943 })?.id).toBe(
+      "next"
+    );
+
+    // After midnight Admin may advance to next week.
+    expect(adminTeamsFocusGame(games, AT_MIDNIGHT)?.id).toBe("next");
+    expect(
+      defaultFocusedGame(games, { adminFocus: true, now: AT_MIDNIGHT })?.id
+    ).toBe("next");
+  });
+
+  it("mobile Admin default must match desktop Admin focus (not nextUpcomingGame)", () => {
+    const games = [tonight(), nextWeek()];
+    // Regression: previous mobile path used nextUpcomingGame and jumped at 7:30.
+    expect(nextUpcomingGame(games, AT_943)?.id).toBe("next");
+    expect(defaultFocusedGame(games, { adminFocus: true, now: AT_943 })?.id).toBe(
+      "tonight"
+    );
+    expect(
+      defaultFocusedGame(games, { adminFocus: false, now: AT_943 })?.id
+    ).toBe("next");
+  });
+
+  it("keeps an already-selected game id across reload while it still exists", () => {
+    const games = [tonight(), nextWeek()];
+    const selectedId = "tonight";
+    const stillPresent = games.some((g) => g.id === selectedId);
+    expect(stillPresent).toBe(true);
+    // Selection effect returns early when the id is still in the list —
+    // even after kickoff and after 10 PM — until midnight default changes.
+    expect(adminTeamsFocusGame(games, AT_943)?.id).toBe("tonight");
+    expect(adminTeamsFocusGame(games, AT_1001)?.id).toBe("tonight");
+  });
+
+  it("mobile session and desktop board both default with adminFocus", () => {
+    const hook = readFileSync("src/hooks/useNearestGameSession.ts", "utf8");
+    const board = readFileSync("src/components/PlayerGameBoard.tsx", "utf8");
+    expect(hook).toContain(
+      "defaultFocusedGame(games, { adminFocus: showAdminUI })"
+    );
+    expect(hook).not.toContain("nextUpcomingGame(games)");
+    expect(board).toContain(
+      "defaultFocusedGame(games, { adminFocus: showAdminUI })"
+    );
+    expect(board).toContain("adminTeamsFocusGame(games)");
   });
 });
 
@@ -157,7 +214,6 @@ describe("Attendance change after kickoff → stale, no regenerate", () => {
       eligibleFingerprint: eligiblePoolFingerprint(["a", "b", "c", "d"]),
     };
 
-    // Player marked Not playing → drops from eligible pool
     const after = areTeamsStale({
       teams,
       currentEligibleIds: ["a", "b", "c"],
@@ -172,7 +228,6 @@ describe("Attendance change after kickoff → stale, no regenerate", () => {
       })
     ).toBe(TEAMS_STALE_MESSAGE);
 
-    // Composition membership is preserved (stale flag only — no regen)
     expect(teams.teamA.map((m) => m.playerId)).toEqual(["a", "b"]);
     expect(teams.teamB.map((m) => m.playerId)).toEqual(["c", "d"]);
   });

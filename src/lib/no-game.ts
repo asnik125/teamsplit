@@ -1,6 +1,9 @@
 import type { AttendanceStatus, Game, UserRole } from "./types";
 import { GAME_TIMEZONE, gameHasNotStarted, nextUpcomingGame } from "./schedule";
-import { vancouverLocalToUtc } from "./notifications/timezone";
+import {
+  addCalendarDays,
+  vancouverLocalToUtc,
+} from "./notifications/timezone";
 
 /** Missing/undefined `noGame` is treated as false. */
 export function gameHasNoGame(game: Pick<Game, "noGame"> | { noGame?: boolean }): boolean {
@@ -8,21 +11,22 @@ export function gameHasNoGame(game: Pick<Game, "noGame"> | { noGame?: boolean })
 }
 
 /**
- * Admin/Owner may edit attendance after kickoff until this local time
- * on the game date (America/Vancouver).
+ * Admin/Owner may edit attendance and operate teams through the end of the
+ * game's Vancouver calendar date. The lock instant is 00:00 on the next day
+ * (editable until 11:59:59 PM America/Vancouver on the game date).
  */
-export const ATTENDANCE_ADMIN_LOCK_LOCAL_TIME = "22:00";
+export const ATTENDANCE_ADMIN_LOCK_LOCAL_TIME = "00:00";
 
-/** Instant when post-kickoff Admin attendance edits lock (22:00 Vancouver). */
+/** Instant when post-kickoff Admin attendance / team ops lock (next-day midnight Vancouver). */
 export function attendanceAdminLockAtMs(game: Pick<Game, "date">): number {
   return vancouverLocalToUtc(
-    game.date,
+    addCalendarDays(game.date, 1),
     ATTENDANCE_ADMIN_LOCK_LOCAL_TIME,
     GAME_TIMEZONE
   ).getTime();
 }
 
-/** Admin and Owner may continue editing after kickoff (until 22:00). */
+/** Admin and Owner may continue editing after kickoff (until end of game date). */
 export function roleMayEditAttendanceAfterKickoff(
   role: UserRole | string | null | undefined
 ): boolean {
@@ -34,8 +38,8 @@ export function roleMayEditAttendanceAfterKickoff(
  *
  * - No Game / non-scheduled: locked for everyone
  * - Before kickoff (America/Vancouver): editable (player vs others still gated elsewhere)
- * - After kickoff until 22:00 Vancouver on the game date: Admin/Owner only
- * - After 22:00 Vancouver on the game date: locked for everyone
+ * - After kickoff until end of game date Vancouver: Admin/Owner only
+ * - From midnight Vancouver on the next calendar day: locked for everyone
  */
 export function canEditAttendanceOnGame(
   game: Pick<Game, "status" | "noGame" | "date" | "startTime">,
@@ -51,7 +55,7 @@ export function canEditAttendanceOnGame(
 /**
  * Admin team ops (Generate / Include Maybe / manual) for a game:
  * - nearest upcoming playable game (unchanged), or
- * - the in-progress game until 22:00 Vancouver on its date (post-kickoff repair).
+ * - the in-progress game until end of its Vancouver calendar date.
  */
 export function canAdminOperateTeamsOnGame(
   game: Pick<Game, "id" | "status" | "noGame" | "date" | "startTime">,
@@ -69,8 +73,8 @@ export function canAdminOperateTeamsOnGame(
 }
 
 /**
- * Which game the Admin Teams panel should follow.
- * Prefer tonight's in-progress game until 22:00 Vancouver; otherwise nearest upcoming.
+ * Which game Admin should follow by default (desktop Teams + mobile Admin).
+ * Prefer tonight's game through 11:59:59 PM Vancouver; otherwise nearest upcoming.
  * Players continue to use `nextUpcomingGame` only.
  */
 export function adminTeamsFocusGame(
@@ -91,6 +95,19 @@ export function adminTeamsFocusGame(
       return b.startTime.localeCompare(a.startTime);
     });
   if (inProgress[0]) return inProgress[0]!;
+  return nextUpcomingGame(games, now);
+}
+
+/**
+ * Default game id for a session: Admin/Owner keep tonight until midnight;
+ * players always follow the next not-yet-started game.
+ */
+export function defaultFocusedGame(
+  games: Game[],
+  opts: { adminFocus: boolean; now?: Date }
+): Game | null {
+  const now = opts.now ?? new Date();
+  if (opts.adminFocus) return adminTeamsFocusGame(games, now);
   return nextUpcomingGame(games, now);
 }
 

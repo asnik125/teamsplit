@@ -10,7 +10,6 @@ import {
   listAttendanceForGame,
   listGames,
   listPlayers,
-  nextUpcomingGame,
 } from "@/lib/firebase/data";
 import {
   ensureTeamsIntegrityApi,
@@ -33,6 +32,7 @@ import {
 } from "@/lib/team-eligibility";
 import {
   canEditAttendanceOnGame,
+  defaultFocusedGame,
   effectiveAttendanceStatus,
   gameHasNoGame,
 } from "@/lib/no-game";
@@ -136,15 +136,20 @@ export function useNearestGameSession() {
     reload().catch((e) => setError(formatUnknownError(e)));
   }, [reload]);
 
-  // Keep selection when possible; otherwise fall back to nearest upcoming.
+  // Keep an explicit selection. Otherwise Admin stays on tonight through
+  // midnight Vancouver; players follow the next not-yet-started game.
   useEffect(() => {
     if (games.length === 0) {
       setSelectedGameId(null);
       return;
     }
     if (selectedGameId && games.some((g) => g.id === selectedGameId)) return;
-    setSelectedGameId(nextUpcomingGame(games)?.id ?? games[0]?.id ?? null);
-  }, [games, selectedGameId]);
+    setSelectedGameId(
+      defaultFocusedGame(games, { adminFocus: showAdminUI })?.id ??
+        games[0]?.id ??
+        null
+    );
+  }, [games, selectedGameId, showAdminUI]);
 
   const selectedGame = useMemo(
     () => games.find((g) => g.id === selectedGameId) ?? null,

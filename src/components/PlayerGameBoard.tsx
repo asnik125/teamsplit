@@ -42,6 +42,7 @@ import {
   effectiveAttendanceStatus,
   gameHasNoGame,
   adminTeamsFocusGame,
+  defaultFocusedGame,
 } from "@/lib/no-game";
 import type {
   AttendanceStatus,
@@ -178,9 +179,13 @@ export function PlayerGameBoard() {
     if (!loaded || games.length === 0) return;
     setSelectedGameId((prev) => {
       if (prev && games.some((g) => g.id === prev)) return prev;
-      return nextUpcomingGame(games)?.id ?? games[0]?.id ?? null;
+      return (
+        defaultFocusedGame(games, { adminFocus: showAdminUI })?.id ??
+        games[0]?.id ??
+        null
+      );
     });
-  }, [loaded, games]);
+  }, [loaded, games, showAdminUI]);
 
   const teamsGame = useMemo(
     () =>

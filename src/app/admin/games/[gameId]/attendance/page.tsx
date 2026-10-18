@@ -11,7 +11,6 @@ import {
   listAttendanceForGame,
   listGames,
   listPlayers,
-  nextUpcomingGame,
 } from "@/lib/firebase/data";
 import { setAttendanceAndSync } from "@/lib/firebase/attendance-api";
 import {
@@ -21,7 +20,10 @@ import {
   formatAttendanceColumnDate,
   compareGamesByDateTime,
 } from "@/lib/schedule";
-import { canEditAttendanceOnGame } from "@/lib/no-game";
+import {
+  adminTeamsFocusGame,
+  canEditAttendanceOnGame,
+} from "@/lib/no-game";
 import type { AttendanceStatus, Game, Player } from "@/lib/types";
 import { formatUnknownError } from "@/lib/errors";
 
@@ -115,8 +117,8 @@ function AttendanceContent() {
       return;
     }
 
-    const nearest = nextUpcomingGame(games);
-    const fallback = nearest?.id ?? games[0]?.id ?? null;
+    const fallback =
+      adminTeamsFocusGame(games)?.id ?? games[0]?.id ?? null;
     setSelectedGameId(fallback);
     if (fallback && fallback !== routeGameId) {
       router.replace(`/admin/games/${fallback}/attendance`);
